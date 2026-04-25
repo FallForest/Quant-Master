@@ -1,0 +1,5 @@
+name: hs300_core_models
+experiments:
+  - ../hs300_ridge_core_v1.yaml
+  - ../hs300_xgb_core_v1.yaml
+  - ../hs300_catboost_core_v1.yaml

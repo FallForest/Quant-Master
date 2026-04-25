@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+
+.venv/
+.codex/
+
+artifacts/
+reports/
+
+data/lake/
+data/raw/
+data/reference/
