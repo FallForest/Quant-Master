@@ -1,0 +1,50 @@
+name: hs300_valuation_family_v1
+group: hs300_factor_families_v1
+market: ashare
+provider: parquet
+data_root: data/lake
+reference_root: data/reference
+universe: hs300
+features:
+  - book_to_market
+  - cashflow_to_price
+  - dividend_yield_ttm
+  - earnings_to_price
+  - log_total_mkt_cap
+  - sales_to_price
+feature_normalization: cross_sectional_zscore
+ic_decay_horizons: [1, 5, 10, 20]
+model: ridge
+model_params:
+  alpha: 1.0
+train:
+  start_date: 2021-01-01
+  end_date: 2024-12-31
+  validation_mode: walk_forward
+  valid_start_date: 2024-01-01
+  valid_end_date: 2024-12-31
+  label_horizon: 5
+  target_mode: cross_sectional_rank
+  purge_size: 5
+  embargo_size: 5
+  walk_forward:
+    train_size: 252
+    valid_size: 63
+    step_size: 63
+    expanding: true
+    purge_size: 5
+    embargo_size: 5
+signal_test:
+  name: full_oos
+  start_date: 2025-01-01
+  end_date: 2026-04-24
+signal_windows:
+  - name: oos_2025_h1
+    start_date: 2025-01-01
+    end_date: 2025-06-30
+  - name: oos_2025_h2
+    start_date: 2025-07-01
+    end_date: 2025-12-31
+  - name: oos_2026_ytd
+    start_date: 2026-01-01
+    end_date: 2026-04-24

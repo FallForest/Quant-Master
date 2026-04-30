@@ -1,0 +1,152 @@
+name: hs300_ridge_all_factors_v1
+group: hs300_all_factors_models_v1
+market: ashare
+provider: parquet
+data_root: data/lake
+reference_root: data/reference
+universe: hs300
+features:
+  - abnormal_turnover_5
+  - abnormal_turnover_20
+  - abnormal_turnover_60
+  - accruals
+  - amihud_illiquidity_5
+  - amihud_illiquidity_20
+  - amihud_illiquidity_60
+  - asset_growth
+  - asset_turnover
+  - atr_14_pct
+  - atr_20_pct
+  - beta_20_hs300
+  - beta_120_hs300
+  - beta_252_hs300
+  - beta_60_hs300
+  - bollinger_zscore_20
+  - book_to_market
+  - capex_growth
+  - cash_profitability
+  - cash_to_assets
+  - cashflow_to_price
+  - channel_position_10
+  - channel_position_20
+  - channel_position_60
+  - close_location_value
+  - close_to_sma_120
+  - close_to_sma_10
+  - close_to_sma_20
+  - close_to_sma_5
+  - close_to_sma_60
+  - distance_to_high_10
+  - distance_to_high_20
+  - distance_to_high_60
+  - distance_to_low_10
+  - distance_to_low_20
+  - distance_to_low_60
+  - dividend_payout_ratio_ttm
+  - dividend_yield_ttm
+  - dollar_volume_5
+  - dollar_volume_20
+  - dollar_volume_60
+  - downside_volatility_20
+  - downside_volatility_60
+  - earnings_to_price
+  - garman_klass_volatility_20
+  - garman_klass_volatility_60
+  - gross_margin
+  - gross_profit_to_assets
+  - high_to_close_pct
+  - industry_momentum_63_21
+  - industry_momentum_126_21
+  - industry_momentum_252_21
+  - intraday_range_pct
+  - inventory_growth
+  - inventory_to_assets
+  - investment_to_assets
+  - ivol_120_hs300
+  - ivol_20_hs300
+  - ivol_60_hs300
+  - liabilities_to_assets
+  - liabilities_to_equity
+  - log_total_mkt_cap
+  - lower_shadow_pct
+  - low_to_close_pct
+  - money_flow_index_14
+  - momentum_63_21
+  - momentum_126_21
+  - momentum_252_21
+  - open_to_close_pct
+  - operating_margin
+  - operating_profitability
+  - overnight_gap_pct
+  - parkinson_volatility_20
+  - parkinson_volatility_60
+  - price_to_26w_high
+  - price_to_52w_high
+  - real_body_pct
+  - receivables_growth
+  - receivables_to_assets
+  - return_1
+  - return_10
+  - return_120
+  - return_20
+  - return_3
+  - return_5
+  - return_60
+  - roa_ttm
+  - roe_ttm
+  - rsi_14
+  - sales_to_price
+  - short_term_reversal_20
+  - short_term_reversal_5
+  - stochastic_d_14_3
+  - stochastic_k_14
+  - turnover_5
+  - turnover_20
+  - turnover_60
+  - upper_shadow_pct
+  - volatility_10
+  - volatility_20
+  - volatility_5
+  - volatility_60
+  - volume_ratio_20
+  - volume_ratio_5
+  - volume_ratio_60
+  - volume_trend_10_60
+  - volume_trend_5_20
+  - williams_r_14
+feature_normalization: cross_sectional_zscore
+ic_decay_horizons: [1, 5, 10, 20]
+model: ridge
+model_params:
+  alpha: 1.0
+train:
+  start_date: 2021-01-01
+  end_date: 2024-12-31
+  validation_mode: walk_forward
+  valid_start_date: 2024-01-01
+  valid_end_date: 2024-12-31
+  label_horizon: 5
+  target_mode: cross_sectional_rank
+  purge_size: 5
+  embargo_size: 5
+  walk_forward:
+    train_size: 252
+    valid_size: 63
+    step_size: 63
+    expanding: true
+    purge_size: 5
+    embargo_size: 5
+signal_test:
+  name: full_oos
+  start_date: 2025-01-01
+  end_date: 2026-04-24
+signal_windows:
+  - name: oos_2025_h1
+    start_date: 2025-01-01
+    end_date: 2025-06-30
+  - name: oos_2025_h2
+    start_date: 2025-07-01
+    end_date: 2025-12-31
+  - name: oos_2026_ytd
+    start_date: 2026-01-01
+    end_date: 2026-04-24

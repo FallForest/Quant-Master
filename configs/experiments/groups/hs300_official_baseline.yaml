@@ -1,0 +1,4 @@
+name: hs300_official_baseline
+research_profile: hs300
+experiments:
+  - ../official/hs300_official_baseline.yaml

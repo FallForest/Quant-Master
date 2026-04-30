@@ -86,6 +86,24 @@ class AKShareAshareProvider:
         adjust: str,
         output_path: str | Path,
     ) -> Path:
+        normalized = self.download_daily_frame(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        normalized.to_csv(target, index=False)
+        return target
+
+    def download_daily_frame(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+    ) -> pd.DataFrame:
         security = self.router.resolve(symbol)
         raw = self._fetch_hist_data(
             security=security,
@@ -93,11 +111,7 @@ class AKShareAshareProvider:
             end_date=end_date,
             adjust=adjust,
         )
-        normalized = self._normalize_hist_frame(raw=raw, security=security)
-        target = Path(output_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        normalized.to_csv(target, index=False)
-        return target
+        return self._normalize_hist_frame(raw=raw, security=security)
 
     def _normalize_hist_frame(self, raw: pd.DataFrame, security: SecurityInfo) -> pd.DataFrame:
         if raw.empty:

@@ -1,0 +1,9 @@
+name: hs300_baseline_selection
+experiments:
+  - ../baseline_selection/hs300_baseline_ridge_std_a1.yaml
+  - ../baseline_selection/hs300_baseline_ridge_cs_zscore_a1.yaml
+  - ../baseline_selection/hs300_baseline_ridge_cs_rank_a1.yaml
+  - ../baseline_selection/hs300_baseline_xgb_std_fixed.yaml
+  - ../baseline_selection/hs300_baseline_xgb_cs_rank_fixed.yaml
+  - ../baseline_selection/hs300_baseline_cat_std_fixed.yaml
+  - ../baseline_selection/hs300_baseline_cat_cs_rank_fixed.yaml

@@ -183,3 +183,16 @@
 ## 8. 一句话结论
 
 Quant Master 现在已经是一个纯 ML 信号研究代码库，不再包含旧的 selector/timing 通用回测链路。
+
+## 9. 2026-04-27 并发与治理落地补充
+
+本轮又补了三件之前缺口比较明显的事：
+
+- `prepare_signal_dataset()` 不再只有行情加载并发。
+  现在会把 `bar load -> factor build -> normalization/label -> dropna/trim` 分阶段计时，并把实际 workers 写进 `PreparedSignalDataset.diagnostics` 与 artifact metadata。
+- `build_factor_frame()` 现在支持按 `symbol` 并发构造因子。
+  新增因子族扩容后，CPU-heavy 的特征构建不再完全串行。
+- `sync_ashare_reference_data()` 现在除了 symbol 级并发，还支持单个 symbol 内部的 `fundamentals / industry / dividends` 子任务并发。
+  CLI 新增 `--bundle-workers`。
+
+同时，`ml.factors.auxiliary` 里原先三份几乎相同的 symbol 级 reference merge 编排已经收敛成一套通用映射框架，避免继续保留重复实现。

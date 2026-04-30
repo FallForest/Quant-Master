@@ -1,0 +1,13 @@
+name: hs300
+market: ashare
+provider: parquet
+data_root: data/lake
+universe_root: data/universe
+reference_root: data/reference
+timeframe: 1d
+adjust: qfq
+universe: hs300
+benchmark_symbol: sh000300
+industry_standard: 申银万国行业分类标准
+market_cap_bucket_count: 5
+official_baseline_manifest: configs/experiments/official/hs300_official_baseline_manifest.json

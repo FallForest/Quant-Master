@@ -1,0 +1,13 @@
+name: hs300_factor_families_v1
+experiments:
+  - ../hs300_bar_shape_family_v1.yaml
+  - ../hs300_investment_family_v1.yaml
+  - ../hs300_liquidity_family_v1.yaml
+  - ../hs300_market_family_v1.yaml
+  - ../hs300_oscillator_family_v1.yaml
+  - ../hs300_position_family_v1.yaml
+  - ../hs300_quality_family_v1.yaml
+  - ../hs300_trend_family_v1.yaml
+  - ../hs300_valuation_family_v1.yaml
+  - ../hs300_volatility_family_v1.yaml
+  - ../hs300_volume_family_v1.yaml

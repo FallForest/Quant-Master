@@ -1,0 +1,49 @@
+name: zz500_catboost_core_v1
+group: zz500_core_models
+research_profile: zz500
+features:
+  - return_20
+  - close_to_sma_20
+  - volatility_20
+  - volume_ratio_20
+  - volume_trend_5_20
+  - channel_position_20
+  - rsi_14
+  - bollinger_zscore_20
+  - intraday_range_pct
+  - overnight_gap_pct
+  - close_location_value
+model: catboost
+model_params:
+  task_type: GPU
+  random_seed: 42
+train:
+  start_date: 2021-01-01
+  end_date: 2024-12-31
+  validation_mode: walk_forward
+  label_horizon: 5
+  target_mode: cross_sectional_rank
+  valid_start_date: 2024-01-01
+  valid_end_date: 2024-12-31
+  purge_size: 5
+  embargo_size: 5
+  walk_forward:
+    train_size: 252
+    valid_size: 63
+    step_size: 63
+    expanding: true
+    purge_size: 5
+    embargo_size: 5
+  tuning:
+    trials: 10
+    metric: spearman_ic
+    direction: maximize
+    seed: 42
+    keep_top_trials: 3
+  candidate_selection:
+    top_k: 3
+    metric: oos_spearman_ic
+    direction: maximize
+signal_test:
+  start_date: 2025-01-01
+  end_date: 2026-04-24

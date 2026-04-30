@@ -1,0 +1,5 @@
+name: hs300_all_factors_models_v1
+experiments:
+  - ../hs300_ridge_all_factors_v1.yaml
+  - ../hs300_xgb_all_factors_v1.yaml
+  - ../hs300_catboost_all_factors_v1.yaml

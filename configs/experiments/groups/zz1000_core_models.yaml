@@ -1,0 +1,6 @@
+name: zz1000_core_models
+research_profile: zz1000
+experiments:
+  - ../zz1000_ridge_core_v1.yaml
+  - ../zz1000_xgb_core_v1.yaml
+  - ../zz1000_catboost_core_v1.yaml

@@ -1,0 +1,102 @@
+{
+  "baseline_name": "hs300_official_baseline",
+  "generated_at": "2026-04-26",
+  "experiment_path": "configs/experiments/official/hs300_official_baseline.yaml",
+  "report_dir": "reports/experiments/hs300_official_baseline",
+  "artifact_path": "artifacts/experiments/hs300_official_baseline/artifact",
+  "fixed_config": {
+    "market": "ashare",
+    "provider": "parquet",
+    "data_root": "data/lake",
+    "reference_root": "data/reference",
+    "universe": "hs300",
+    "features": [
+      "return_20",
+      "close_to_sma_20",
+      "volatility_20",
+      "volume_ratio_20",
+      "volume_trend_5_20",
+      "channel_position_20",
+      "rsi_14",
+      "bollinger_zscore_20",
+      "intraday_range_pct",
+      "overnight_gap_pct",
+      "close_location_value"
+    ],
+    "feature_normalization": "none",
+    "model": "ridge",
+    "model_params": {
+      "alpha": 1.0
+    },
+    "label_column": "future_return_rank_5d",
+    "label_horizon": 5,
+    "target_mode": "cross_sectional_rank",
+    "signal_test": {
+      "name": "full_oos",
+      "start_date": "2025-01-01",
+      "end_date": "2026-04-24"
+    },
+    "signal_windows": [
+      {
+        "name": "oos_2025_h1",
+        "start_date": "2025-01-01",
+        "end_date": "2025-06-30"
+      },
+      {
+        "name": "oos_2025_h2",
+        "start_date": "2025-07-01",
+        "end_date": "2025-12-31"
+      },
+      {
+        "name": "oos_2026_ytd",
+        "start_date": "2026-01-01",
+        "end_date": "2026-04-24"
+      }
+    ],
+    "ic_decay_horizons": [
+      1,
+      5,
+      10,
+      20
+    ]
+  },
+  "promotion_rule": {
+    "rule": "candidate must beat all official baseline gate metrics simultaneously",
+    "metrics": {
+      "full_oos_spearman_ic": 0.044856317729784816,
+      "window_mean_spearman_ic": 0.053602588405752466,
+      "window_min_spearman_ic": 0.04514425433724039,
+      "window_mean_ic_ir": 0.4157395824988952
+    }
+  },
+  "diagnostics_snapshot": {
+    "signal_test_ic_decay": [
+      {
+        "horizon": 1,
+        "spearman_ic": 0.026564308029869477,
+        "ic_ir": 0.18876664440745242
+      },
+      {
+        "horizon": 5,
+        "spearman_ic": 0.04612550742605984,
+        "ic_ir": 0.3505883643313274
+      },
+      {
+        "horizon": 10,
+        "spearman_ic": 0.06016003115577634,
+        "ic_ir": 0.5202887064505581
+      },
+      {
+        "horizon": 20,
+        "spearman_ic": 0.06220965123248432,
+        "ic_ir": 0.5548838743314842
+      }
+    ],
+    "signal_test_slice_meta": {
+      "benchmark_symbol": "sh000300",
+      "industry_standard": "申银万国行业分类标准",
+      "market_cap_bucket_count": 5,
+      "industry_coverage_ratio": 1.0
+    }
+  }
+}

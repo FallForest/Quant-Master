@@ -10,7 +10,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from ml.experiments.scheduler import GroupExecutionOptions, execute_group
+from ml.experiments.loader import load_experiment_spec
+from ml.experiments.scheduler import GroupExecutionOptions, _apply_runtime_overrides, execute_group
 
 
 def test_execute_group_parallel_preserves_input_order(tmp_path: Path, monkeypatch) -> None:
@@ -76,3 +77,36 @@ def test_execute_group_parallel_preserves_input_order(tmp_path: Path, monkeypatc
     assert failures == []
     assert [item["experiment_path"] for item in summaries] == [str(cpu_experiment), str(gpu_experiment)]
     assert summaries[1]["gpu_device"] == "0"
+
+
+def test_apply_runtime_overrides_propagates_cpu_thread_budget_to_tuning(tmp_path: Path) -> None:
+    experiment = tmp_path / "gpu_tuning.yaml"
+    experiment.write_text(
+        "\n".join(
+            [
+                "name: gpu_tuning_demo",
+                "model: xgboost",
+                "model_params:",
+                "  device: cuda",
+                "features: ['return_5']",
+                "train:",
+                "  start_date: 2021-01-01",
+                "  end_date: 2021-02-01",
+                "  tuning:",
+                "    trials: 3",
+                "signal_test:",
+                "  start_date: 2021-03-01",
+                "  end_date: 2021-03-31",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    spec = load_experiment_spec(experiment)
+    overridden = _apply_runtime_overrides(spec=spec, cpu_threads_per_job=8, gpu_device="0")
+
+    assert overridden.model_params["n_jobs"] == 8
+    assert overridden.model_params["device"] == "cuda:0"
+    assert overridden.train.tuning is not None
+    assert overridden.train.tuning.cpu_threads_per_trial == 8
+    assert overridden.train.tuning.gpu_devices == ["0"]

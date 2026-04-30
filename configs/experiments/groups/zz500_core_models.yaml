@@ -1,0 +1,6 @@
+name: zz500_core_models
+research_profile: zz500
+experiments:
+  - ../zz500_ridge_core_v1.yaml
+  - ../zz500_xgb_core_v1.yaml
+  - ../zz500_catboost_core_v1.yaml

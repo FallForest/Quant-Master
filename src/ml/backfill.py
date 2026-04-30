@@ -10,6 +10,7 @@ from data.provider_factory import build_data_provider
 from ml.artifacts import load_signal_artifact, save_signal_artifact
 from ml.dataset import build_training_dataset, drop_rows_without_features
 from ml.experiments.compare import load_group_summary
+from ml.experiments.group_tracking import GroupRunTracker
 from ml.experiments.loader import load_experiment_group_spec, load_experiment_spec
 from ml.experiments.specs import ExperimentSpec
 from ml.models import aggregate_validation_metrics, evaluate_model
@@ -22,6 +23,8 @@ def backfill_signal_metrics_from_path(
     artifact_path_override: str | Path | None = None,
     report_dir_override: str | Path | None = None,
 ) -> dict[str, object]:
+    """按实验路径回填信号评估结果。"""
+
     experiment_path = Path(path)
     spec = load_experiment_spec(experiment_path)
     artifact_path = Path(
@@ -42,7 +45,9 @@ def backfill_signal_metrics_from_path(
     )
 
 
-def backfill_signal_metrics_group_from_path(path: str | Path) -> dict[str, object]:
+def backfill_signal_metrics_group_from_path(path: str | Path, *, resume: bool = False) -> dict[str, object]:
+    """批量回填一个实验组。"""
+
     group_path = Path(path)
     group_spec = load_experiment_group_spec(group_path)
     base_dir = group_path.parent
@@ -51,33 +56,38 @@ def backfill_signal_metrics_group_from_path(path: str | Path) -> dict[str, objec
         for item in group_spec.experiments
     ]
     group_output_dir = Path(group_spec.output_dir or Path("reports") / "experiments" / "groups" / group_spec.name)
-    group_output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = group_output_dir / "group_summary.json"
     existing_summary = load_group_summary(group_path) if summary_path.exists() else None
     existing_index = {
         str(item.get("experiment_path")): dict(item)
         for item in list((existing_summary or {}).get("experiments", []))
     }
+    tracker = GroupRunTracker(
+        group_name=group_spec.name,
+        experiment_paths=[str(path) for path in experiment_paths],
+        output_dir=group_output_dir,
+        mode="backfill",
+        continue_on_error=False,
+        resume=resume,
+        execution_options={},
+    )
+    pending_paths = [Path(path) for path in tracker.pending_paths()]
+    if not pending_paths:
+        return tracker.finalize(status="completed")
 
-    experiments = [
-        backfill_signal_metrics_from_path(
-            path,
-            artifact_path_override=existing_index.get(str(path), {}).get("artifact_path"),
-            report_dir_override=existing_index.get(str(path), {}).get("report_dir"),
-        )
-        for path in experiment_paths
-    ]
-    group_summary = {
-        "name": group_spec.name,
-        "experiment_paths": [str(path) for path in experiment_paths],
-        "experiment_count": len(experiment_paths),
-        "completed_count": len(experiments),
-        "failed_count": 0,
-        "experiments": experiments,
-        "failures": [],
-    }
-    summary_path.write_text(json.dumps(group_summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    return group_summary
+    try:
+        for experiment_path in pending_paths:
+            summary = backfill_signal_metrics_from_path(
+                experiment_path,
+                artifact_path_override=existing_index.get(str(experiment_path), {}).get("artifact_path"),
+                report_dir_override=existing_index.get(str(experiment_path), {}).get("report_dir"),
+            )
+            tracker.record_completed(summary)
+    except Exception as exc:
+        tracker.record_failure(experiment_path=str(experiment_path), error=str(exc))
+        tracker.finalize(status="failed")
+        raise
+    return tracker.finalize(status="completed")
 
 
 def backfill_signal_metrics(
@@ -87,11 +97,14 @@ def backfill_signal_metrics(
     report_dir: Path,
     experiment_path: Path | None = None,
 ) -> dict[str, object]:
+    """对单个实验执行实际 backfill。"""
+
     if not artifact_path.exists():
         raise FileNotFoundError(
             f"Artifact path was not found for backfill: {artifact_path}. "
             "Run the experiment first or provide a summary with the correct artifact_path."
         )
+    # backfill 复用现有模型对象，只更新由数据/评估口径决定的统计字段。
     model, metadata = load_signal_artifact(artifact_path)
     frame = _build_training_frame(spec=spec, metadata=metadata)
     validation_summary = _evaluate_existing_artifact_validation(
@@ -131,6 +144,8 @@ def backfill_signal_metrics(
 
 
 def _build_training_frame(*, spec: ExperimentSpec, metadata: dict[str, object]) -> pd.DataFrame:
+    """按 artifact metadata 重新构造训练数据表。"""
+
     provider = build_data_provider(
         provider_name=spec.provider,
         data_root=spec.data_root,
@@ -160,6 +175,7 @@ def _build_training_frame(*, spec: ExperimentSpec, metadata: dict[str, object]) 
         reference_root=str(metadata.get("reference_root", spec.reference_root)),
         market=str(metadata.get("market", spec.market)),
         target_mode=str(metadata.get("target_mode", spec.train.target_mode)),
+        feature_normalization=str(metadata.get("feature_normalization", spec.feature_normalization)),
     )
     return drop_rows_without_features(
         frame=bundle.frame,
@@ -174,6 +190,8 @@ def _evaluate_existing_artifact_validation(
     metadata: dict[str, object],
     frame: pd.DataFrame,
 ) -> ValidationSummary:
+    """根据 artifact 中记录的验证方式，重算 validation summary。"""
+
     feature_columns = list(metadata["feature_columns"])
     label_column = str(metadata["label_column"])
     validation_mode = str(metadata.get("validation_mode", "holdout"))
@@ -203,6 +221,8 @@ def _evaluate_existing_holdout(
     label_column: str,
     metadata: dict[str, object],
 ) -> ValidationSummary:
+    """用已有模型重算 holdout 验证指标。"""
+
     train_end_date, valid_start_date, valid_end_date = _resolve_holdout_dates(metadata)
     train_frame, valid_frame = split_dataset_by_time(
         frame=frame,
@@ -248,6 +268,8 @@ def _evaluate_existing_walk_forward(
     label_column: str,
     config: dict[str, object],
 ) -> ValidationSummary:
+    """用已有模型重算 walk-forward 验证指标。"""
+
     splits = build_walk_forward_splits(
         frame,
         config=_build_walk_forward_config(config),
@@ -290,6 +312,8 @@ def _evaluate_existing_walk_forward(
 
 
 def _resolve_holdout_dates(metadata: dict[str, object]) -> tuple[str | None, str | None, str | None]:
+    """从 artifact metadata 里反推出 holdout 分割日期。"""
+
     folds = list(metadata.get("validation_folds", []))
     if folds:
         fold = dict(folds[0])
@@ -307,6 +331,8 @@ def _resolve_holdout_dates(metadata: dict[str, object]) -> tuple[str | None, str
 
 
 def _frame_date(frame: pd.DataFrame, *, first: bool) -> str | None:
+    """返回数据框首尾时间，供 summary 落盘。"""
+
     if frame.empty:
         return None
     series = pd.to_datetime(frame["timestamp"])
@@ -315,6 +341,8 @@ def _frame_date(frame: pd.DataFrame, *, first: bool) -> str | None:
 
 
 def _build_walk_forward_config(config: dict[str, object]):
+    """把 JSON 结构的 walk-forward 配置还原成运行时对象。"""
+
     from ml.validation import WalkForwardConfig
 
     return WalkForwardConfig(

@@ -84,6 +84,7 @@ def run_adaptive_io_tasks(
     min_workers: int = 1,
     cpu_target_pct: float = DEFAULT_IO_CPU_TARGET_PCT,
     batch_size_multiplier: int = DEFAULT_IO_BATCH_SIZE_MULTIPLIER,
+    on_outcome: Callable[[AdaptiveIoOutcome[TItem, TResult]], None] | None = None,
     progress_factory=tqdm,
 ) -> AdaptiveIoReport[TItem, TResult]:
     item_list = list(items)
@@ -141,6 +142,9 @@ def run_adaptive_io_tasks(
                     except Exception as exc:  # noqa: BLE001
                         outcomes[index] = AdaptiveIoOutcome(item=item, error=exc)
                     finally:
+                        if on_outcome is not None:
+                            assert outcomes[index] is not None
+                            on_outcome(outcomes[index])
                         progress_bar.update(1)
 
             next_index += batch_size

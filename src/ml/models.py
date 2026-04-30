@@ -5,13 +5,39 @@ from dataclasses import dataclass
 from math import log2
 
 import pandas as pd
-from catboost import CatBoostRegressor
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBRegressor
+
+try:
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import mean_absolute_error, r2_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+except ModuleNotFoundError as exc:  # pragma: no cover - depends on local environment
+    SimpleImputer = None
+    Ridge = None
+    mean_absolute_error = None
+    r2_score = None
+    Pipeline = None
+    StandardScaler = None
+    _SKLEARN_IMPORT_ERROR = exc
+else:
+    _SKLEARN_IMPORT_ERROR = None
+
+try:
+    from xgboost import XGBRegressor
+except ModuleNotFoundError as exc:  # pragma: no cover - depends on local environment
+    XGBRegressor = None
+    _XGBOOST_IMPORT_ERROR = exc
+else:
+    _XGBOOST_IMPORT_ERROR = None
+
+try:
+    from catboost import CatBoostRegressor
+except ModuleNotFoundError as exc:  # pragma: no cover - depends on local environment
+    CatBoostRegressor = None
+    _CATBOOST_IMPORT_ERROR = exc
+else:
+    _CATBOOST_IMPORT_ERROR = None
 
 SUPPORTED_MODEL_NAMES = ("ridge", "xgboost", "catboost")
 
@@ -86,6 +112,7 @@ def resolve_model_params(model_name: str, model_params: dict | None = None) -> d
 
 
 def build_model(model_name: str, model_params: dict | None = None):
+    _require_base_ml_dependencies()
     params = resolve_model_params(model_name=model_name, model_params=model_params)
     if model_name == "ridge":
         return Pipeline(
@@ -96,6 +123,7 @@ def build_model(model_name: str, model_params: dict | None = None):
             ]
         )
     if model_name == "xgboost":
+        _require_xgboost()
         return Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),
@@ -119,6 +147,7 @@ def build_model(model_name: str, model_params: dict | None = None):
             ]
         )
     if model_name == "catboost":
+        _require_catboost()
         return Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),
@@ -167,19 +196,30 @@ def score_frame(estimator, frame: pd.DataFrame, feature_columns: list[str], scor
 
 
 def evaluate_model(estimator, frame: pd.DataFrame, feature_columns: list[str], label_column: str) -> ValidationMetrics:
+    _require_base_ml_dependencies()
     if frame.empty:
-        return ValidationMetrics(
-            mae=0.0,
-            r2=0.0,
-            pearson_ic=0.0,
-            spearman_ic=0.0,
-            ic_std=0.0,
-            ic_ir=0.0,
-            ndcg_at_10=0.0,
-        )
-    predictions = estimator.predict(frame[feature_columns])
+        return _empty_validation_metrics()
+    scored = score_frame(estimator=estimator, frame=frame, feature_columns=feature_columns, score_column="__prediction")
+    scored["__label"] = frame[label_column].astype(float)
+    scored = scored.dropna(subset=["__prediction", "__label"]).reset_index(drop=True)
+    return evaluate_scored_frame(
+        frame=scored,
+        prediction_column="__prediction",
+        label_column="__label",
+    )
+
+
+def evaluate_scored_frame(
+    *,
+    frame: pd.DataFrame,
+    prediction_column: str,
+    label_column: str,
+) -> ValidationMetrics:
+    _require_base_ml_dependencies()
+    if frame.empty:
+        return _empty_validation_metrics()
     actual = frame[label_column].astype(float)
-    predicted = pd.Series(predictions, index=frame.index, dtype=float)
+    predicted = frame[prediction_column].astype(float)
     scored = frame.assign(__prediction=predicted, __label=actual)
     pearson_series = _cross_sectional_ic_series(
         frame=scored,
@@ -219,15 +259,7 @@ def serialize_model_params(model_params: dict | None) -> dict:
 
 def aggregate_validation_metrics(metrics_list: list[ValidationMetrics]) -> ValidationMetrics:
     if not metrics_list:
-        return ValidationMetrics(
-            mae=0.0,
-            r2=0.0,
-            pearson_ic=0.0,
-            spearman_ic=0.0,
-            ic_std=0.0,
-            ic_ir=0.0,
-            ndcg_at_10=0.0,
-        )
+        return _empty_validation_metrics()
     count = float(len(metrics_list))
     return ValidationMetrics(
         mae=float(sum(item.mae for item in metrics_list) / count),
@@ -238,6 +270,27 @@ def aggregate_validation_metrics(metrics_list: list[ValidationMetrics]) -> Valid
         ic_ir=float(sum(item.ic_ir for item in metrics_list) / count),
         ndcg_at_10=float(sum(item.ndcg_at_10 for item in metrics_list) / count),
     )
+
+
+def _require_base_ml_dependencies() -> None:
+    if _SKLEARN_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "scikit-learn is not installed. Run `.venv\\Scripts\\python -m pip install -r requirements.txt` first."
+        ) from _SKLEARN_IMPORT_ERROR
+
+
+def _require_xgboost() -> None:
+    if _XGBOOST_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "xgboost is not installed. Run `.venv\\Scripts\\python -m pip install -r requirements.txt` first."
+        ) from _XGBOOST_IMPORT_ERROR
+
+
+def _require_catboost() -> None:
+    if _CATBOOST_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "catboost is not installed. Run `.venv\\Scripts\\python -m pip install -r requirements.txt` first."
+        ) from _CATBOOST_IMPORT_ERROR
 
 
 def _cross_sectional_ic_series(
@@ -285,3 +338,15 @@ def _dcg(values: list[float]) -> float:
         gain = (2.0 ** float(value)) - 1.0
         total += gain / log2(index + 1)
     return float(total)
+
+
+def _empty_validation_metrics() -> ValidationMetrics:
+    return ValidationMetrics(
+        mae=0.0,
+        r2=0.0,
+        pearson_ic=0.0,
+        spearman_ic=0.0,
+        ic_std=0.0,
+        ic_ir=0.0,
+        ndcg_at_10=0.0,
+    )

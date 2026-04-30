@@ -1,0 +1,51 @@
+name: zz500_official_baseline
+group: zz500_official_baseline
+research_profile: zz500
+features:
+  - return_20
+  - close_to_sma_20
+  - volatility_20
+  - volume_ratio_20
+  - volume_trend_5_20
+  - channel_position_20
+  - rsi_14
+  - bollinger_zscore_20
+  - intraday_range_pct
+  - overnight_gap_pct
+  - close_location_value
+feature_normalization: none
+ic_decay_horizons: [1, 5, 10, 20]
+model: ridge
+model_params:
+  alpha: 1.0
+train:
+  start_date: 2021-01-01
+  end_date: 2024-12-31
+  validation_mode: walk_forward
+  valid_start_date: 2024-01-01
+  valid_end_date: 2024-12-31
+  label_horizon: 5
+  target_mode: cross_sectional_rank
+  purge_size: 5
+  embargo_size: 5
+  walk_forward:
+    train_size: 252
+    valid_size: 63
+    step_size: 63
+    expanding: true
+    purge_size: 5
+    embargo_size: 5
+signal_test:
+  name: full_oos
+  start_date: 2025-01-01
+  end_date: 2026-04-24
+signal_windows:
+  - name: oos_2025_h1
+    start_date: 2025-01-01
+    end_date: 2025-06-30
+  - name: oos_2025_h2
+    start_date: 2025-07-01
+    end_date: 2025-12-31
+  - name: oos_2026_ytd
+    start_date: 2026-01-01
+    end_date: 2026-04-24

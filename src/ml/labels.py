@@ -11,11 +11,13 @@ def add_future_return_label(
 ) -> pd.DataFrame:
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
+    label_column = future_return_label_name(horizon)
     if data.empty:
-        return data.copy()
+        empty = data.copy()
+        empty[label_column] = pd.Series(dtype="float64")
+        return empty
 
     ordered = data.sort_values(["symbol", "timestamp"]).copy()
-    label_column = future_return_label_name(horizon)
     ordered[label_column] = (
         ordered.groupby("symbol")[price_column].shift(-horizon) / ordered[price_column] - 1.0
     )

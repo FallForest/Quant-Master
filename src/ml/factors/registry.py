@@ -34,6 +34,103 @@ class FactorRegistry:
         return [factor for factor in self.list_factors() if factor.family == family]
 
 
+def estimate_factor_history_lookback(
+    factor_names: list[str],
+    *,
+    registry: FactorRegistry | None = None,
+) -> int:
+    active_registry = registry or get_default_registry()
+    lookbacks = [_estimate_factor_spec_history_lookback(active_registry.get_factor(name)) for name in factor_names]
+    return max(lookbacks, default=0)
+
+
+def _estimate_factor_spec_history_lookback(spec: FactorSpec) -> int:
+    kind = str(spec.params.get("kind", "") or "")
+    window = int(spec.params.get("window", 0) or 0)
+    skip_window = int(spec.params.get("skip_window", 0) or 0)
+    short_window = int(spec.params.get("short_window", 0) or 0)
+    long_window = int(spec.params.get("long_window", 0) or 0)
+    d_window = int(spec.params.get("d_window", 0) or 0)
+
+    if kind in {
+        "intraday_range_pct",
+        "open_to_close_pct",
+        "close_location_value",
+        "high_to_close_pct",
+        "low_to_close_pct",
+        "upper_shadow_pct",
+        "lower_shadow_pct",
+        "real_body_pct",
+    }:
+        return 0
+    if kind == "overnight_gap_pct":
+        return 1
+    if kind in {
+        "return",
+        "short_term_reversal",
+        "sma_distance",
+        "price_to_rolling_high",
+        "price_to_rolling_low",
+        "volume_ratio",
+        "channel_position",
+        "distance_to_high",
+        "distance_to_low",
+        "stochastic_k",
+        "williams_r",
+        "parkinson_volatility",
+        "garman_klass_volatility",
+    }:
+        return window
+    if kind in {"volatility", "beta", "idiosyncratic_volatility", "amihud", "downside_volatility", "atr_pct", "money_flow_index"}:
+        return window + 1
+    if kind == "volume_trend":
+        return max(short_window, long_window)
+    if kind == "rsi":
+        return window + 1
+    if kind == "stochastic_d":
+        return max(0, window + d_window - 1)
+    if kind == "bollinger_zscore":
+        return window
+    if kind in {"momentum_skip", "industry_momentum_skip"}:
+        return max(window, skip_window)
+    if kind in {
+        "turnover",
+        "abnormal_turnover",
+        "dollar_volume",
+    }:
+        return window
+    if kind in {
+        "log_total_mkt_cap",
+        "book_to_market",
+        "earnings_to_price",
+        "sales_to_price",
+        "cashflow_to_price",
+        "dividend_yield_ttm",
+        "gross_profit_to_assets",
+        "operating_profitability",
+        "roe_ttm",
+        "roa_ttm",
+        "gross_margin",
+        "operating_margin",
+        "cash_profitability",
+        "asset_turnover",
+        "dividend_payout_ratio_ttm",
+        "liabilities_to_assets",
+        "liabilities_to_equity",
+        "cash_to_assets",
+        "inventory_to_assets",
+        "receivables_to_assets",
+        "asset_growth",
+        "investment_to_assets",
+        "accruals",
+        "inventory_growth",
+        "receivables_growth",
+        "capex_growth",
+    }:
+        return 0
+    return max(window, short_window, long_window)
+
+
 def _factor(
     *,
     name: str,
@@ -66,7 +163,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["price_only", "trend"],
             stability_level="stable" if window in {20} else "candidate",
         )
-        for window in [1, 3, 5, 10, 20, 60]
+        for window in [1, 3, 5, 10, 20, 60, 120]
     ]
     + [
         _factor(
@@ -77,7 +174,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["price_only", "trend"],
             stability_level="stable" if window in {20} else "candidate",
         )
-        for window in [5, 10, 20, 60]
+        for window in [5, 10, 20, 60, 120]
     ]
     + [
         _factor(
@@ -88,7 +185,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["risk"],
             stability_level="stable" if window in {20} else "candidate",
         )
-        for window in [5, 10, 20]
+        for window in [5, 10, 20, 60]
     ]
     + [
         _factor(
@@ -99,7 +196,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["volume"],
             stability_level="stable" if window in {20} else "candidate",
         )
-        for window in [5, 20]
+        for window in [5, 20, 60]
     ]
     + [
         _factor(
@@ -108,6 +205,22 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             description="Short-vs-medium volume acceleration using 5-day and 20-day averages.",
             params={"kind": "volume_trend", "short_window": 5, "long_window": 20},
             tags=["volume", "trend"],
+        ),
+        _factor(
+            name="volume_trend_10_60",
+            family="volume",
+            description="Short-vs-long volume acceleration using 10-day and 60-day averages.",
+            params={"kind": "volume_trend", "short_window": 10, "long_window": 60},
+            tags=["volume", "trend"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="momentum_63_21",
+            family="trend",
+            description="3-1 momentum using the return from 63 trading days ago to 21 days ago.",
+            params={"kind": "momentum_skip", "window": 63, "skip_window": 21},
+            tags=["price_only", "trend", "momentum"],
+            stability_level="candidate",
         ),
         _factor(
             name="momentum_126_21",
@@ -122,6 +235,38 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             description="12-1 momentum using the return from 252 trading days ago to 21 days ago.",
             params={"kind": "momentum_skip", "window": 252, "skip_window": 21},
             tags=["price_only", "trend", "momentum"],
+        ),
+        _factor(
+            name="industry_momentum_63_21",
+            family="trend",
+            description="3-1 industry momentum using equal-weighted same-industry returns from 63 trading days ago to 21 days ago.",
+            params={"kind": "industry_momentum_skip", "window": 63, "skip_window": 21, "source_column": "industry_return_1_level_1"},
+            tags=["industry", "trend", "momentum"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="industry_momentum_126_21",
+            family="trend",
+            description="6-1 industry momentum using equal-weighted same-industry returns from 126 trading days ago to 21 days ago.",
+            params={"kind": "industry_momentum_skip", "window": 126, "skip_window": 21, "source_column": "industry_return_1_level_1"},
+            tags=["industry", "trend", "momentum"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="industry_momentum_252_21",
+            family="trend",
+            description="12-1 industry momentum using equal-weighted same-industry returns from 252 trading days ago to 21 days ago.",
+            params={"kind": "industry_momentum_skip", "window": 252, "skip_window": 21, "source_column": "industry_return_1_level_1"},
+            tags=["industry", "trend", "momentum"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="price_to_26w_high",
+            family="trend",
+            description="Distance from the rolling 126-day closing high.",
+            params={"kind": "price_to_rolling_high", "window": 126},
+            tags=["price_only", "trend", "breakout"],
+            stability_level="candidate",
         ),
         _factor(
             name="price_to_52w_high",
@@ -151,7 +296,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
                 tags=["range", "position"],
                 stability_level="stable" if window in {20} else "candidate",
             )
-            for window in [10, 20]
+            for window in [10, 20, 60]
         ],
         *[
             _factor(
@@ -162,7 +307,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
                 tags=["range", "breakout"],
                 stability_level="candidate",
             )
-            for window in [10, 20]
+            for window in [10, 20, 60]
         ],
         *[
             _factor(
@@ -173,7 +318,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
                 tags=["range", "reversion"],
                 stability_level="candidate",
             )
-            for window in [10, 20]
+            for window in [10, 20, 60]
         ],
         _factor(
             name="rsi_14",
@@ -188,6 +333,38 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             description="20-day Bollinger z-score of close price.",
             params={"kind": "bollinger_zscore", "window": 20},
             tags=["oscillator", "mean_reversion"],
+        ),
+        _factor(
+            name="stochastic_k_14",
+            family="oscillator",
+            description="14-day stochastic oscillator %K.",
+            params={"kind": "stochastic_k", "window": 14},
+            tags=["oscillator", "range"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="stochastic_d_14_3",
+            family="oscillator",
+            description="3-day smoothed stochastic oscillator %D based on 14-day %K.",
+            params={"kind": "stochastic_d", "window": 14, "d_window": 3},
+            tags=["oscillator", "range"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="williams_r_14",
+            family="oscillator",
+            description="14-day Williams %R oscillator.",
+            params={"kind": "williams_r", "window": 14},
+            tags=["oscillator", "range"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="money_flow_index_14",
+            family="oscillator",
+            description="14-day Money Flow Index using typical price and volume.",
+            params={"kind": "money_flow_index", "window": 14},
+            tags=["oscillator", "volume"],
+            stability_level="candidate",
         ),
         _factor(
             name="intraday_range_pct",
@@ -234,6 +411,30 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["bar_shape"],
             stability_level="candidate",
         ),
+        _factor(
+            name="upper_shadow_pct",
+            family="bar_shape",
+            description="Upper shadow length scaled by close.",
+            params={"kind": "upper_shadow_pct"},
+            tags=["bar_shape", "candlestick"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="lower_shadow_pct",
+            family="bar_shape",
+            description="Lower shadow length scaled by close.",
+            params={"kind": "lower_shadow_pct"},
+            tags=["bar_shape", "candlestick"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="real_body_pct",
+            family="bar_shape",
+            description="Absolute candlestick body length scaled by open.",
+            params={"kind": "real_body_pct"},
+            tags=["bar_shape", "candlestick"],
+            stability_level="candidate",
+        ),
         *[
             _factor(
                 name=f"beta_{window}_hs300",
@@ -243,7 +444,7 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
                 tags=["benchmark", "risk"],
                 stability_level="candidate",
             )
-            for window in [60, 120]
+            for window in [20, 60, 120, 252]
         ],
         *[
             _factor(
@@ -254,8 +455,16 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
                 tags=["benchmark", "risk"],
                 stability_level="candidate",
             )
-            for window in [20, 60]
+            for window in [20, 60, 120]
         ],
+        _factor(
+            name="amihud_illiquidity_5",
+            family="liquidity",
+            description="5-day average Amihud illiquidity using return divided by traded amount proxy.",
+            params={"kind": "amihud", "window": 5},
+            tags=["liquidity"],
+            stability_level="candidate",
+        ),
         _factor(
             name="amihud_illiquidity_20",
             family="liquidity",
@@ -265,21 +474,46 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             stability_level="candidate",
         ),
         _factor(
-            name="turnover_20",
+            name="amihud_illiquidity_60",
             family="liquidity",
-            description="20-day rolling mean turnover ratio using traded volume and share capital.",
-            params={"kind": "turnover", "window": 20},
-            tags=["liquidity", "turnover"],
+            description="60-day average Amihud illiquidity using return divided by traded amount proxy.",
+            params={"kind": "amihud", "window": 60},
+            tags=["liquidity"],
             stability_level="candidate",
         ),
-        _factor(
-            name="abnormal_turnover_20",
-            family="liquidity",
-            description="Current turnover relative to its 20-day rolling mean.",
-            params={"kind": "abnormal_turnover", "window": 20},
-            tags=["liquidity", "turnover"],
-            stability_level="candidate",
-        ),
+        *[
+            _factor(
+                name=f"turnover_{window}",
+                family="liquidity",
+                description=f"{window}-day rolling mean turnover ratio using traded volume and share capital.",
+                params={"kind": "turnover", "window": window},
+                tags=["liquidity", "turnover"],
+                stability_level="candidate",
+            )
+            for window in [5, 20, 60]
+        ],
+        *[
+            _factor(
+                name=f"abnormal_turnover_{window}",
+                family="liquidity",
+                description=f"Current turnover relative to its {window}-day rolling mean.",
+                params={"kind": "abnormal_turnover", "window": window},
+                tags=["liquidity", "turnover"],
+                stability_level="candidate",
+            )
+            for window in [5, 20, 60]
+        ],
+        *[
+            _factor(
+                name=f"dollar_volume_{window}",
+                family="liquidity",
+                description=f"{window}-day rolling mean traded amount proxy.",
+                params={"kind": "dollar_volume", "window": window},
+                tags=["liquidity", "volume"],
+                stability_level="candidate",
+            )
+            for window in [5, 20, 60]
+        ],
         _factor(
             name="log_total_mkt_cap",
             family="valuation",
@@ -313,6 +547,22 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             stability_level="candidate",
         ),
         _factor(
+            name="cashflow_to_price",
+            family="valuation",
+            description="Operating-cashflow-to-price ratio using trailing operating cash flow per share.",
+            params={"kind": "cashflow_to_price"},
+            tags=["valuation", "value", "cashflow"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="dividend_yield_ttm",
+            family="valuation",
+            description="Trailing-12-month cash dividend yield using cash dividends per share divided by price.",
+            params={"kind": "dividend_yield_ttm"},
+            tags=["valuation", "yield", "dividend"],
+            stability_level="candidate",
+        ),
+        _factor(
             name="gross_profit_to_assets",
             family="quality",
             description="Trailing gross profit scaled by total assets.",
@@ -337,6 +587,94 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             stability_level="candidate",
         ),
         _factor(
+            name="roa_ttm",
+            family="quality",
+            description="Trailing return on assets using parent net profit and total assets.",
+            params={"kind": "roa_ttm"},
+            tags=["quality", "profitability"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="gross_margin",
+            family="quality",
+            description="Trailing gross margin using revenue minus operating cost divided by revenue.",
+            params={"kind": "gross_margin"},
+            tags=["quality", "profitability", "margin"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="operating_margin",
+            family="quality",
+            description="Trailing operating profit divided by trailing revenue.",
+            params={"kind": "operating_margin"},
+            tags=["quality", "profitability", "margin"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="cash_profitability",
+            family="quality",
+            description="Trailing operating cash flow scaled by total assets.",
+            params={"kind": "cash_profitability"},
+            tags=["quality", "cashflow", "profitability"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="asset_turnover",
+            family="quality",
+            description="Trailing revenue scaled by total assets.",
+            params={"kind": "asset_turnover"},
+            tags=["quality", "efficiency"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="dividend_payout_ratio_ttm",
+            family="quality",
+            description="Trailing cash dividend per share divided by trailing earnings per share.",
+            params={"kind": "dividend_payout_ratio_ttm"},
+            tags=["quality", "payout", "dividend"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="liabilities_to_assets",
+            family="quality",
+            description="Total liabilities scaled by total assets as a simple balance-sheet leverage proxy.",
+            params={"kind": "liabilities_to_assets"},
+            tags=["quality", "safety", "leverage"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="liabilities_to_equity",
+            family="quality",
+            description="Total liabilities scaled by parent equity as a simple book leverage proxy.",
+            params={"kind": "liabilities_to_equity"},
+            tags=["quality", "safety", "leverage"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="cash_to_assets",
+            family="quality",
+            description="Monetary funds scaled by total assets as a balance-sheet safety proxy.",
+            params={"kind": "cash_to_assets"},
+            tags=["quality", "safety", "liquidity"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="inventory_to_assets",
+            family="quality",
+            description="Inventory scaled by total assets.",
+            params={"kind": "inventory_to_assets"},
+            tags=["quality", "working_capital"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="receivables_to_assets",
+            family="quality",
+            description="Accounts receivable scaled by total assets.",
+            params={"kind": "receivables_to_assets"},
+            tags=["quality", "working_capital"],
+            stability_level="candidate",
+        ),
+        _factor(
             name="asset_growth",
             family="investment",
             description="Year-over-year growth in total assets using report-date fundamentals.",
@@ -353,6 +691,30 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             stability_level="candidate",
         ),
         _factor(
+            name="inventory_growth",
+            family="investment",
+            description="Year-over-year inventory growth using report-date fundamentals.",
+            params={"kind": "inventory_growth"},
+            tags=["investment", "working_capital"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="receivables_growth",
+            family="investment",
+            description="Year-over-year receivables growth using report-date fundamentals.",
+            params={"kind": "receivables_growth"},
+            tags=["investment", "working_capital"],
+            stability_level="candidate",
+        ),
+        _factor(
+            name="capex_growth",
+            family="investment",
+            description="Year-over-year growth in trailing capital expenditure intensity level.",
+            params={"kind": "capex_growth"},
+            tags=["investment", "capex"],
+            stability_level="candidate",
+        ),
+        _factor(
             name="accruals",
             family="quality",
             description="Trailing earnings minus operating cash flow scaled by lagged assets.",
@@ -360,6 +722,50 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             tags=["quality", "earnings_quality"],
             stability_level="candidate",
         ),
+        *[
+            _factor(
+                name=f"downside_volatility_{window}",
+                family="market",
+                description=f"{window}-day downside semideviation of daily returns.",
+                params={"kind": "downside_volatility", "window": window},
+                tags=["risk", "downside"],
+                stability_level="candidate",
+            )
+            for window in [20, 60]
+        ],
+        *[
+            _factor(
+                name=f"atr_{window}_pct",
+                family="volatility",
+                description=f"{window}-day average true range scaled by close.",
+                params={"kind": "atr_pct", "window": window},
+                tags=["risk", "range"],
+                stability_level="candidate",
+            )
+            for window in [14, 20]
+        ],
+        *[
+            _factor(
+                name=f"parkinson_volatility_{window}",
+                family="volatility",
+                description=f"{window}-day Parkinson high-low volatility estimator.",
+                params={"kind": "parkinson_volatility", "window": window},
+                tags=["risk", "range"],
+                stability_level="candidate",
+            )
+            for window in [20, 60]
+        ],
+        *[
+            _factor(
+                name=f"garman_klass_volatility_{window}",
+                family="volatility",
+                description=f"{window}-day Garman-Klass OHLC volatility estimator.",
+                params={"kind": "garman_klass_volatility", "window": window},
+                tags=["risk", "ohlc"],
+                stability_level="candidate",
+            )
+            for window in [20, 60]
+        ],
     ]
 )
 

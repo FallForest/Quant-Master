@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import pandas as pd
 
-from data.loading import load_bars_for_symbols
-from data.provider_factory import build_data_provider
 from ml.artifacts import save_signal_artifact
-from ml.dataset import build_training_dataset, drop_rows_without_features
 from ml.models import fit_model, resolve_model_params, serialize_model_params
+from ml.prepared_data import PreparedSignalDataset, SignalDatasetCache, prepare_signal_dataset
 from ml.tuning import TuningConfig, TuningResult, tune_model_params
 from ml.validation import (
     WalkForwardConfig,
@@ -36,6 +32,7 @@ def train_ml_signal_model(
     model_name: str = "ridge",
     model_params: dict | None = None,
     feature_columns: list[str] | None = None,
+    feature_normalization: str = "none",
     label_horizon: int = 5,
     target_mode: str = "future_return",
     train_end_date: str | None = None,
@@ -46,50 +43,46 @@ def train_ml_signal_model(
     tuning_config: TuningConfig | None = None,
     purge_size: int = 0,
     embargo_size: int = 0,
+    dataset_cache: SignalDatasetCache | None = None,
+    prepared_dataset: PreparedSignalDataset | None = None,
 ) -> dict:
-    selected_features = list(feature_columns or [])
-    if not selected_features:
-        raise ValueError("feature_columns must not be empty.")
+    """训练一个 ML 信号模型，并把模型与元数据保存为 artifact。
 
-    provider = build_data_provider(
+    这是训练链路的核心函数，负责：
+    1. 准备数据集
+    2. 运行验证 / 调参
+    3. 在完整训练集上拟合最终模型
+    4. 产出 artifact metadata，供后续 signal_test / backfill / compare 复用
+    """
+
+    # prepared_dataset 允许上游把已经构造好的数据直接传进来，
+    # 避免候选筛选后重复加载和重复做特征工程。
+    prepared = prepared_dataset or prepare_signal_dataset(
+        market=market,
         provider_name=provider_name,
         data_root=data_root,
         universe_root=universe_root,
-        adjust=adjust,
-    )
-    start = datetime.fromisoformat(start_date)
-    end = datetime.fromisoformat(end_date)
-    resolved_symbols = list(symbols or [])
-    if not resolved_symbols:
-        resolved_symbols = provider.load_universe(market=market, universe=universe, date=start)
-    if not resolved_symbols:
-        raise ValueError("No symbols were resolved for ML training.")
-
-    data = _load_training_bars(
-        provider=provider,
-        market=market,
-        timeframe=timeframe,
-        symbols=resolved_symbols,
-        start=start,
-        end=end,
-    )
-    bundle = build_training_dataset(
-        data=data,
-        label_horizon=label_horizon,
-        feature_columns=selected_features,
         reference_root=reference_root,
-        market=market,
+        adjust=adjust,
+        timeframe=timeframe,
+        symbols=symbols,
+        universe=universe,
+        start_date=start_date,
+        end_date=end_date,
+        feature_columns=list(feature_columns or []),
+        feature_normalization=feature_normalization,
+        label_horizon=label_horizon,
         target_mode=target_mode,
+        progress_desc="Loading training bars",
+        dataset_cache=dataset_cache,
     )
-    training_frame = drop_rows_without_features(
-        frame=bundle.frame,
-        feature_columns=bundle.feature_columns,
-        label_column=bundle.label_column,
-    )
+    training_frame = prepared.frame
     if training_frame.empty:
         raise ValueError("Training dataset is empty after feature and label filtering.")
 
     resolved_model_params = resolve_model_params(model_name=model_name, model_params=model_params)
+    # 默认先构造一个“未启用 tuning”的占位 summary；
+    # 如果后面真的启用了 tuning，会被真实结果覆盖。
     tuning_summary = TuningResult(
         enabled=False,
         metric="",
@@ -103,6 +96,9 @@ def train_ml_signal_model(
     selection_frame = training_frame
     selection_mode = validation_mode
     if tuning_config is not None:
+        # tuning 和最终 selection 是两层不同目的的切分：
+        # - tuning_frame: 用来搜索参数
+        # - selection_frame: 用来从候选参数中挑最终方案
         tuning_frame, selection_frame = _split_tuning_and_selection_frames(
             frame=training_frame,
             validation_mode=validation_mode,
@@ -113,8 +109,8 @@ def train_ml_signal_model(
         )
         tuning_summary = tune_model_params(
             frame=tuning_frame,
-            feature_columns=bundle.feature_columns,
-            label_column=bundle.label_column,
+            feature_columns=prepared.feature_columns,
+            label_column=prepared.label_column,
             model_name=model_name,
             base_model_params=model_params,
             tuning_config=tuning_config,
@@ -130,8 +126,8 @@ def train_ml_signal_model(
         validation_summary = evaluate_explicit_split(
             train_frame=tuning_frame,
             valid_frame=selection_frame,
-            feature_columns=bundle.feature_columns,
-            label_column=bundle.label_column,
+            feature_columns=prepared.feature_columns,
+            label_column=prepared.label_column,
             model_name=model_name,
             model_params=resolved_model_params,
             mode="holdout",
@@ -140,8 +136,8 @@ def train_ml_signal_model(
     else:
         validation_summary = _run_validation(
             frame=training_frame,
-            feature_columns=bundle.feature_columns,
-            label_column=bundle.label_column,
+            feature_columns=prepared.feature_columns,
+            label_column=prepared.label_column,
             model_name=model_name,
             model_params=resolved_model_params,
             validation_mode=validation_mode,
@@ -152,19 +148,23 @@ def train_ml_signal_model(
             purge_size=purge_size,
             embargo_size=embargo_size,
         )
+    # 完成验证/调参后，最终模型始终在完整 training_frame 上重新拟合一次。
     estimator = fit_model(
         frame=training_frame,
-        feature_columns=bundle.feature_columns,
-        label_column=bundle.label_column,
+        feature_columns=prepared.feature_columns,
+        label_column=prepared.label_column,
         model_name=model_name,
         model_params=resolved_model_params,
     )
+    # metadata 是后续所有流程的桥梁：
+    # signal_test / backfill / compare 都依赖它复原训练口径。
     metadata = {
         "artifact_type": "ml_signal",
         "model_name": model_name,
         "model_params": serialize_model_params(resolved_model_params),
-        "feature_columns": bundle.feature_columns,
-        "label_column": bundle.label_column,
+        "feature_columns": prepared.feature_columns,
+        "feature_normalization": feature_normalization,
+        "label_column": prepared.label_column,
         "label_horizon": int(label_horizon),
         "target_mode": target_mode,
         "market": market,
@@ -172,8 +172,9 @@ def train_ml_signal_model(
         "timeframe": timeframe,
         "adjust": adjust,
         "reference_root": reference_root,
-        "symbols_count": len(resolved_symbols),
+        "symbols_count": len(prepared.symbols),
         "train_rows": int(len(training_frame)),
+        "data_preparation": dict(prepared.diagnostics),
         "data_start": start_date,
         "data_end": end_date,
         "validation_mode": validation_mode,
@@ -211,6 +212,8 @@ def _run_validation(
     purge_size: int,
     embargo_size: int,
 ) -> ValidationSummary:
+    """根据配置选择 holdout 或 walk-forward 验证。"""
+
     if validation_mode == "walk_forward":
         if walk_forward_config is None:
             raise ValueError("walk_forward_config is required when validation_mode=walk_forward.")
@@ -237,6 +240,8 @@ def _run_validation(
 
 
 def _serialize_walk_forward_config(config: WalkForwardConfig | None) -> dict[str, object] | None:
+    """把 walk-forward 配置转成可写入 artifact 的 JSON 结构。"""
+
     if config is None:
         return None
     return {
@@ -258,6 +263,12 @@ def _split_tuning_and_selection_frames(
     valid_end_date: str | None,
     full_end_date: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """把完整训练窗拆成“调参内层样本”和“最终选择外层样本”。
+
+    这样做的目的是避免直接拿 tuning 过程中见过的数据决定最终候选，
+    减少参数选择阶段的信息泄漏。
+    """
+
     if not valid_start_date or not valid_end_date:
         raise ValueError("Optuna tuning requires valid_start_date and valid_end_date as an outer selection window.")
     selection_start = pd.Timestamp(valid_start_date)
@@ -279,17 +290,3 @@ def _split_tuning_and_selection_frames(
     if selection_frame.empty:
         raise ValueError("Selection frame is empty inside the requested valid_start_date/valid_end_date window.")
     return tuning_frame, selection_frame
-
-
-def _load_training_bars(provider, market: str, timeframe: str, symbols: list[str], start: datetime, end: datetime) -> pd.DataFrame:
-    return load_bars_for_symbols(
-        provider=provider,
-        market=market,
-        timeframe=timeframe,
-        symbols=symbols,
-        start=start,
-        end=end,
-        progress_desc="Loading training bars",
-        show_progress=True,
-        empty_columns=["timestamp", "symbol", "open", "high", "low", "close", "volume"],
-    )
