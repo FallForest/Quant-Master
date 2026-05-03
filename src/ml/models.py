@@ -75,26 +75,25 @@ RECOMMENDED_MODEL_PARAMS = {
 class ValidationMetrics:
     mae: float
     r2: float
-    pearson_ic: float
-    spearman_ic: float
+    ic: float
+    rank_ic: float
     ic_std: float
-    ic_ir: float
+    rank_ic_std: float
+    icir: float
+    rank_icir: float
     ndcg_at_10: float
 
     def as_dict(self) -> dict[str, float]:
         return {
             "mae": self.mae,
             "r2": self.r2,
-            "pearson_ic": self.pearson_ic,
-            "spearman_ic": self.spearman_ic,
+            "ic": self.ic,
+            "rank_ic": self.rank_ic,
             "ic_std": self.ic_std,
-            "ic_ir": self.ic_ir,
+            "rank_ic_std": self.rank_ic_std,
+            "icir": self.icir,
+            "rank_icir": self.rank_icir,
             "ndcg_at_10": self.ndcg_at_10,
-            "oos_pearson_ic": self.pearson_ic,
-            "oos_spearman_ic": self.spearman_ic,
-            "oos_ic_std": self.ic_std,
-            "oos_ic_ir": self.ic_ir,
-            "oos_ndcg_at_10": self.ndcg_at_10,
         }
 
 
@@ -235,15 +234,19 @@ def evaluate_scored_frame(
     )
     pearson = float(pearson_series.mean()) if not pearson_series.empty else 0.0
     spearman = float(spearman_series.mean()) if not spearman_series.empty else 0.0
-    ic_std = float(spearman_series.std(ddof=0)) if len(spearman_series) > 1 else 0.0
-    ic_ir = float(spearman / ic_std) if ic_std > 0 else 0.0
+    pearson_std = float(pearson_series.std(ddof=0)) if len(pearson_series) > 1 else 0.0
+    spearman_std = float(spearman_series.std(ddof=0)) if len(spearman_series) > 1 else 0.0
+    pearson_ir = float(pearson / pearson_std) if pearson_std > 0 else 0.0
+    spearman_ir = float(spearman / spearman_std) if spearman_std > 0 else 0.0
     return ValidationMetrics(
         mae=float(mean_absolute_error(actual, predicted)),
         r2=float(r2_score(actual, predicted)),
-        pearson_ic=0.0 if pd.isna(pearson) else float(pearson),
-        spearman_ic=0.0 if pd.isna(spearman) else float(spearman),
-        ic_std=0.0 if pd.isna(ic_std) else float(ic_std),
-        ic_ir=0.0 if pd.isna(ic_ir) else float(ic_ir),
+        ic=0.0 if pd.isna(pearson) else float(pearson),
+        rank_ic=0.0 if pd.isna(spearman) else float(spearman),
+        ic_std=0.0 if pd.isna(pearson_std) else float(pearson_std),
+        rank_ic_std=0.0 if pd.isna(spearman_std) else float(spearman_std),
+        icir=0.0 if pd.isna(pearson_ir) else float(pearson_ir),
+        rank_icir=0.0 if pd.isna(spearman_ir) else float(spearman_ir),
         ndcg_at_10=_mean_ndcg_at_k(
             frame=scored,
             prediction_column="__prediction",
@@ -264,10 +267,12 @@ def aggregate_validation_metrics(metrics_list: list[ValidationMetrics]) -> Valid
     return ValidationMetrics(
         mae=float(sum(item.mae for item in metrics_list) / count),
         r2=float(sum(item.r2 for item in metrics_list) / count),
-        pearson_ic=float(sum(item.pearson_ic for item in metrics_list) / count),
-        spearman_ic=float(sum(item.spearman_ic for item in metrics_list) / count),
+        ic=float(sum(item.ic for item in metrics_list) / count),
+        rank_ic=float(sum(item.rank_ic for item in metrics_list) / count),
         ic_std=float(sum(item.ic_std for item in metrics_list) / count),
-        ic_ir=float(sum(item.ic_ir for item in metrics_list) / count),
+        rank_ic_std=float(sum(item.rank_ic_std for item in metrics_list) / count),
+        icir=float(sum(item.icir for item in metrics_list) / count),
+        rank_icir=float(sum(item.rank_icir for item in metrics_list) / count),
         ndcg_at_10=float(sum(item.ndcg_at_10 for item in metrics_list) / count),
     )
 
@@ -344,9 +349,11 @@ def _empty_validation_metrics() -> ValidationMetrics:
     return ValidationMetrics(
         mae=0.0,
         r2=0.0,
-        pearson_ic=0.0,
-        spearman_ic=0.0,
+        ic=0.0,
+        rank_ic=0.0,
         ic_std=0.0,
-        ic_ir=0.0,
+        rank_ic_std=0.0,
+        icir=0.0,
+        rank_icir=0.0,
         ndcg_at_10=0.0,
     )

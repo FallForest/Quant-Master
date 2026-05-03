@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass(slots=True)
 class CandidateSelectionConfig:
     top_k: int = 5
-    metric: str = "oos_spearman_ic"
+    metric: str = "rank_ic"
     direction: str = "maximize"
 
     def as_dict(self) -> dict[str, object]:

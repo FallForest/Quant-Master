@@ -36,7 +36,7 @@ def test_load_experiment_spec_reads_signal_test_block(tmp_path: Path) -> None:
 
     assert spec.signal_test.start_date == "2022-01-01"
     assert spec.signal_test.end_date == "2022-06-30"
-    assert spec.train.candidate_selection.metric == "oos_spearman_ic"
+    assert spec.train.candidate_selection.metric == "rank_ic"
 
 
 def test_load_experiment_spec_rejects_legacy_backtest_alias(tmp_path: Path) -> None:

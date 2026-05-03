@@ -33,6 +33,9 @@ class FactorRegistry:
     def list_factors_by_family(self, family: str) -> list[FactorSpec]:
         return [factor for factor in self.list_factors() if factor.family == family]
 
+    def list_factors_by_tag(self, tag: str) -> list[FactorSpec]:
+        return [factor for factor in self.list_factors() if tag in factor.tags]
+
 
 def estimate_factor_history_lookback(
     factor_names: list[str],
@@ -65,6 +68,15 @@ def _estimate_factor_spec_history_lookback(spec: FactorSpec) -> int:
         return 0
     if kind == "overnight_gap_pct":
         return 1
+    if kind == "qlib_price_ratio":
+        return int(spec.params.get("lag", 0) or 0)
+    if kind == "qlib_kbar":
+        return 0
+    if kind == "qlib_rolling":
+        rolling_op = str(spec.params.get("op", "") or "")
+        if rolling_op in {"CORR", "CORD", "CNTP", "CNTN", "CNTD", "SUMP", "SUMN", "SUMD", "WVMA", "VSUMP", "VSUMN", "VSUMD"}:
+            return window + 1
+        return window
     if kind in {
         "return",
         "short_term_reversal",
@@ -151,6 +163,144 @@ def _factor(
         tags=tags,
         stability_level=stability_level,
     )
+
+
+def _qlib_factor(
+    *,
+    name: str,
+    family: str,
+    description: str,
+    params: dict[str, object],
+    tags: list[str],
+) -> FactorSpec:
+    return _factor(
+        name=name,
+        family=family,
+        description=description,
+        params=params,
+        tags=tags,
+        stability_level="candidate",
+    )
+
+
+QLIB_PRICE_FIELDS = ("open", "high", "low", "close", "vwap")
+QLIB_ALPHA360_PRICE_FIELDS = ("close", "open", "high", "low", "vwap")
+QLIB_ROLLING_WINDOWS = (5, 10, 20, 30, 60)
+QLIB_ROLLING_OPS = (
+    "ROC",
+    "MA",
+    "STD",
+    "BETA",
+    "RSQR",
+    "RESI",
+    "MAX",
+    "MIN",
+    "QTLU",
+    "QTLD",
+    "RANK",
+    "RSV",
+    "IMAX",
+    "IMIN",
+    "IMXD",
+    "CORR",
+    "CORD",
+    "CNTP",
+    "CNTN",
+    "CNTD",
+    "SUMP",
+    "SUMN",
+    "SUMD",
+    "VMA",
+    "VSTD",
+    "WVMA",
+    "VSUMP",
+    "VSUMN",
+    "VSUMD",
+)
+QLIB_KBAR_FEATURES = ("KMID", "KLEN", "KMID2", "KUP", "KUP2", "KLOW", "KLOW2", "KSFT", "KSFT2")
+QLIB_ALPHA158_PRICE_FEATURES = ("OPEN0", "HIGH0", "LOW0", "VWAP0")
+
+
+def get_qlib_alpha158_factor_names() -> list[str]:
+    names = list(QLIB_KBAR_FEATURES)
+    names.extend(QLIB_ALPHA158_PRICE_FEATURES)
+    for op in QLIB_ROLLING_OPS:
+        for window in QLIB_ROLLING_WINDOWS:
+            names.append(f"{op}{window}")
+    return names
+
+
+def get_qlib_alpha360_factor_names() -> list[str]:
+    names: list[str] = []
+    for field in QLIB_ALPHA360_PRICE_FIELDS:
+        for lag in range(59, -1, -1):
+            names.append(f"{field.upper()}{lag}")
+    for lag in range(59, -1, -1):
+        names.append(f"VOLUME{lag}")
+    return names
+
+
+def _qlib_raw_family(field: str) -> str:
+    return "raw_volume_history" if field == "volume" else "raw_price_history"
+
+
+def _qlib_raw_tags(field: str, lag: int) -> list[str]:
+    tags = ["qlib", "alpha360", "history"]
+    if field != "close" and lag == 0:
+        tags.append("alpha158")
+    return tags
+
+
+def _qlib_rolling_family(op: str) -> str:
+    if op in {"ROC", "CNTP", "CNTN", "CNTD", "SUMP", "SUMN", "SUMD"}:
+        return "trend"
+    if op in {"VMA", "VSTD", "WVMA", "VSUMP", "VSUMN", "VSUMD"}:
+        return "volume"
+    if op in {"RSV", "IMAX", "IMIN", "IMXD", "RANK"}:
+        return "position"
+    return "rolling_stats"
+
+
+def _build_qlib_engineered_factors() -> list[FactorSpec]:
+    factors: list[FactorSpec] = []
+    for feature in QLIB_KBAR_FEATURES:
+        factors.append(
+            _qlib_factor(
+                name=feature,
+                family="bar_shape",
+                description=f"Qlib Alpha158 hard-coded kbar feature {feature}.",
+                params={"kind": "qlib_kbar", "feature": feature},
+                tags=["qlib", "alpha158", "kbar"],
+            )
+        )
+    for op in QLIB_ROLLING_OPS:
+        for window in QLIB_ROLLING_WINDOWS:
+            factors.append(
+                _qlib_factor(
+                    name=f"{op}{window}",
+                    family=_qlib_rolling_family(op),
+                    description=f"Qlib Alpha158 rolling operator {op} with window {window}.",
+                    params={"kind": "qlib_rolling", "op": op, "window": window},
+                    tags=["qlib", "alpha158", "rolling"],
+                )
+            )
+    return factors
+
+
+def _build_qlib_raw_history_factors() -> list[FactorSpec]:
+    factors: list[FactorSpec] = []
+    for field in (*QLIB_ALPHA360_PRICE_FIELDS, "volume"):
+        for lag in range(59, -1, -1):
+            factors.append(
+                _qlib_factor(
+                    name=f"{field.upper()}{lag}",
+                    family=_qlib_raw_family(field),
+                    description=f"Qlib normalized {field} lag {lag}.",
+                    params={"kind": "qlib_price_ratio", "field": field, "lag": lag},
+                    tags=_qlib_raw_tags(field, lag),
+                )
+            )
+    return factors
 
 
 DEFAULT_FACTOR_REGISTRY = FactorRegistry(
@@ -766,6 +916,8 @@ DEFAULT_FACTOR_REGISTRY = FactorRegistry(
             )
             for window in [20, 60]
         ],
+        *_build_qlib_engineered_factors(),
+        *_build_qlib_raw_history_factors(),
     ]
 )
 

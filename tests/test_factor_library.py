@@ -13,7 +13,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ml.factors.builder import build_factor_frame
-from ml.factors.registry import DEFAULT_FACTOR_REGISTRY
+from ml.factors.families import FACTOR_FAMILIES
+from ml.factors.registry import (
+    DEFAULT_FACTOR_REGISTRY,
+    estimate_factor_history_lookback,
+    get_qlib_alpha158_factor_names,
+    get_qlib_alpha360_factor_names,
+)
 
 
 def test_default_registry_exposes_new_canonical_factors() -> None:
@@ -75,6 +81,65 @@ def test_default_registry_exposes_new_canonical_factors() -> None:
     assert "receivables_growth" in names
     assert "capex_growth" in names
     assert "dividend_payout_ratio_ttm" in names
+    assert "KMID" in names
+    assert "OPEN0" in names
+    assert "OPEN59" in names
+    assert "VWAP59" in names
+    assert "VOLUME59" in names
+    assert "BETA60" in names
+    assert "RSQR30" in names
+    assert "IMXD20" in names
+    assert "VSUMD10" in names
+
+    assert "qlib_alpha158" not in FACTOR_FAMILIES
+    assert "qlib_alpha360" not in FACTOR_FAMILIES
+    assert "rolling_stats" in FACTOR_FAMILIES
+    assert "raw_price_history" in FACTOR_FAMILIES
+    assert "raw_volume_history" in FACTOR_FAMILIES
+
+    open0 = DEFAULT_FACTOR_REGISTRY.get_factor("OPEN0")
+    open59 = DEFAULT_FACTOR_REGISTRY.get_factor("OPEN59")
+    kmid = DEFAULT_FACTOR_REGISTRY.get_factor("KMID")
+    ma5 = DEFAULT_FACTOR_REGISTRY.get_factor("MA5")
+    volume59 = DEFAULT_FACTOR_REGISTRY.get_factor("VOLUME59")
+
+    assert open0.family == "raw_price_history"
+    assert "alpha158" in open0.tags
+    assert "alpha360" in open0.tags
+    assert open59.family == "raw_price_history"
+    assert "alpha158" not in open59.tags
+    assert "alpha360" in open59.tags
+    assert kmid.family == "bar_shape"
+    assert "alpha158" in kmid.tags
+    assert ma5.family == "rolling_stats"
+    assert "alpha158" in ma5.tags
+    assert volume59.family == "raw_volume_history"
+    assert "alpha360" in volume59.tags
+
+
+def test_qlib_named_sets_follow_expected_membership() -> None:
+    alpha158 = get_qlib_alpha158_factor_names()
+    alpha360 = get_qlib_alpha360_factor_names()
+
+    assert "KMID" in alpha158
+    assert "OPEN0" in alpha158
+    assert "HIGH0" in alpha158
+    assert "LOW0" in alpha158
+    assert "VWAP0" in alpha158
+    assert "VOLUME0" not in alpha158
+    assert "CLOSE0" not in alpha158
+    assert "OPEN1" not in alpha158
+    assert "MA5" in alpha158
+    assert "VSUMD60" in alpha158
+
+    assert "OPEN0" in alpha360
+    assert "OPEN59" in alpha360
+    assert "CLOSE0" in alpha360
+    assert "VWAP59" in alpha360
+    assert "VOLUME0" in alpha360
+    assert "VOLUME59" in alpha360
+    assert "KMID" not in alpha360
+    assert "MA5" not in alpha360
 
 
 def test_build_factor_frame_computes_new_fundamental_factors(tmp_path: Path) -> None:
@@ -376,3 +441,51 @@ def test_build_factor_frame_preserves_requested_factor_order_and_history_count()
     expected_suffix = factor_names + ["history_count"]
     assert list(features.columns[-len(expected_suffix) :]) == expected_suffix
     assert features["history_count"].tolist() == [1, 2, 3, 4, 5, 6]
+
+
+def test_build_factor_frame_computes_representative_qlib_factors() -> None:
+    close = [10.0 + index for index in range(70)]
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=70, freq="D"),
+            "symbol": ["000001"] * 70,
+            "open": [value - 0.2 for value in close],
+            "high": [value + 0.5 for value in close],
+            "low": [value - 0.6 for value in close],
+            "close": close,
+            "volume": [1000.0 + index * 10.0 for index in range(70)],
+            "amount": [(1000.0 + index * 10.0) * 100.0 * (value + 0.1) for index, value in enumerate(close)],
+        }
+    )
+
+    features = build_factor_frame(
+        frame,
+        factor_names=["OPEN0", "OPEN59", "VWAP0", "VOLUME1", "KMID", "MA5", "STD5", "IMAX5", "CORR5"],
+    )
+    row = features.iloc[-1]
+    current_close = frame.iloc[-1]["close"]
+    expected_open0 = frame.iloc[-1]["open"] / current_close
+    expected_open59 = frame.iloc[-60]["open"] / current_close
+    expected_vwap0 = (frame.iloc[-1]["amount"] / (frame.iloc[-1]["volume"] * 100.0)) / current_close
+    expected_volume1 = frame.iloc[-2]["volume"] / frame.iloc[-1]["volume"]
+    expected_kmid = (frame.iloc[-1]["close"] - frame.iloc[-1]["open"]) / frame.iloc[-1]["open"]
+    expected_ma5 = frame["close"].iloc[-5:].mean() / current_close
+    expected_std5 = frame["close"].iloc[-5:].std(ddof=0) / current_close
+    expected_imax5 = 0.0
+    expected_corr5 = frame["close"].iloc[-5:].corr(np.log(frame["volume"].iloc[-5:] + 1.0))
+
+    assert row["OPEN0"] == pytest.approx(expected_open0)
+    assert row["OPEN59"] == pytest.approx(expected_open59)
+    assert row["VWAP0"] == pytest.approx(expected_vwap0)
+    assert row["VOLUME1"] == pytest.approx(expected_volume1)
+    assert row["KMID"] == pytest.approx(expected_kmid)
+    assert row["MA5"] == pytest.approx(expected_ma5)
+    assert row["STD5"] == pytest.approx(expected_std5)
+    assert row["IMAX5"] == pytest.approx(expected_imax5)
+    assert row["CORR5"] == pytest.approx(expected_corr5)
+
+
+def test_estimate_factor_history_lookback_handles_qlib_factors() -> None:
+    assert estimate_factor_history_lookback(["OPEN59"]) == 59
+    assert estimate_factor_history_lookback(["MA60"]) == 60
+    assert estimate_factor_history_lookback(["CORD30"]) == 31

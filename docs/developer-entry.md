@@ -21,7 +21,7 @@ Quant Master 当前是一个以 A 股 ML 信号研究为核心的项目，不再
 - 模型训练
 - 泄漏控制验证
 - 信号层候选筛选
-- 最终 signal test
+- 最终 signal 评估
 - 实验组对比与指标回填
 
 当前因子库已经覆盖：
@@ -33,6 +33,7 @@ Quant Master 当前是一个以 A 股 ML 信号研究为核心的项目，不再
 - 波动率与 OHLC 波动率估计
 - 成交量 / 流动性
 - 估值 / 质量 / 投资
+- Qlib 兼容 `Alpha158 / Alpha360` 视图
 
 ## 2. 根目录入口
 
@@ -70,7 +71,6 @@ ML 主链路：
 
 - `universe`
 - `benchmark_symbol`
-- `official_baseline_manifest`
 - `provider`
 - `data_root`
 - `reference_root`
@@ -148,12 +148,6 @@ py build_parquet_dataset.py --research-profile hs300 --input-root data/raw --out
   - `*_failures.json`
 - reference sync 的 manifest / failures 已细化到 task 级，例如 `dividends:000001`
 
-显式指定 profile baseline 做比较：
-
-```bash
-py compare_ml_experiments.py --group hs300_core_models --research-profile hs300
-```
-
 对单只股票复用当前 profile 的 baseline artifact 打分：
 
 ```bash
@@ -216,6 +210,15 @@ py predict_single_stock.py --research-profile hs300 --symbol 000063
 - `lower_shadow_pct`
 - `real_body_pct`
 
+同时，Qlib 的 `Alpha158 / Alpha360` 已经收敛成同一套 factor registry 上的命名视图和标签，可直接使用例如：
+
+- `KMID`
+- `OPEN0`
+- `OPEN59`
+- `MA5`
+- `RSQR20`
+- `VSUMD10`
+
 这个流程不再经过任何 `selector / timing / backtest` 组合逻辑。
 当前实现还额外做了两件吞吐优化：
 
@@ -266,56 +269,43 @@ py predict_single_stock.py --research-profile hs300 --symbol 000063
 - `report`
   - 输出目录和 artifact 路径
 
-## 7. 官方 Baseline
+## 7. 因子实现口径
 
-官方 baseline 已经固定为：
+当前仓库只有一套因子实现入口：
 
-- config: `configs/experiments/official/hs300_official_baseline.yaml`
-- manifest: `configs/experiments/official/hs300_official_baseline_manifest.json`
+- `src/ml/factors/registry.py`
+- `src/ml/factors/builder.py`
 
-固定配置包括：
+Qlib 的 `Alpha158 / Alpha360` 没有单独保留一套平行实现，而是直接吸收到这套统一 registry/builder 中。
 
-- model: `ridge`
-- `alpha = 1.0`
-- `feature_normalization = none`
-- label: `future_return_rank_5d`
-- target mode: `cross_sectional_rank`
-- signal test: `2025-01-01` 到 `2026-04-24`
-- signal windows:
-  - `oos_2025_h1`
-  - `oos_2025_h2`
-  - `oos_2026_ytd`
+这意味着：
 
-晋级规则已经固定：
+- 训练、评估、数据准备继续走同一套接口
+- Qlib 同名因子可以直接写进实验 `features`
+- 不维护“旧实现 + Qlib 实现”双轨版本
 
-- 新实验必须同时超过 `full_oos_spearman_ic`
-- 新实验必须同时超过 `window_mean_spearman_ic`
-- 新实验必须同时超过 `window_min_spearman_ic`
-- 新实验必须同时超过 `window_mean_ic_ir`
+同时，`Alpha158 / Alpha360` 不再作为 factor family 使用，而是：
 
-比较输出会自动读取 manifest，并给出：
-
-- `beats_official_baseline`
-- `baseline_gate_failures`
+- family 按语义组织，例如 `bar_shape / rolling_stats / raw_price_history / raw_volume_history`
+- Qlib 来源通过 `tags` 和 named set 表达
+- 重合名字例如 `OPEN0` 只保留一份实现，但可以同时属于 `alpha158` 和 `alpha360` 视图
 
 ## 8. 重点看哪些指标
 
 看 artifact 本身好不好，优先看：
 
-- `oos_spearman_ic`
-- `oos_pearson_ic`
-- `oos_ic_std`
-- `oos_ic_ir`
-- `oos_ndcg_at_10`
+- `rank_ic`
+- `rank_icir`
+- `ic`
+- `icir`
 
 看最终样本外信号窗口，优先看：
 
 - `signal_test_metrics`
-- `full_oos_spearman_ic`
-- `window_mean_spearman_ic`
-- `window_min_spearman_ic`
-- `window_mean_ic_ir`
-- `test_ndcg_at_10`
+- `test_rank_ic`
+- `test_rank_icir`
+- `test_ic`
+- `test_icir`
 
 看诊断切片，优先看：
 
@@ -339,7 +329,6 @@ py predict_single_stock.py --research-profile hs300 --symbol 000063
 - `src/ml/experiments/loader.py`
 - `src/ml/experiments/runner.py`
 - `src/ml/experiments/compare.py`
-- `src/ml/experiments/baseline.py`
 - `src/ml/experiments/scheduler.py`
 - `src/ml/prepared_data.py`
 - `src/ml/diagnostics.py`
@@ -385,4 +374,4 @@ py predict_single_stock.py --research-profile hs300 --symbol 000063
 
 ## 11. 一句话结论
 
-当前仓库已经不再是“通用回测 + selector/timing 策略”项目，而是一个聚焦在 ML 信号研究、验证、比较和数据准备的研究型代码库，并且已经固化了一条官方 HS300 baseline 作为后续所有实验的统一参照线。
+当前仓库已经不再是“通用回测 + selector/timing 策略”项目，而是一个聚焦在 ML 信号研究、验证、比较和数据准备的研究型代码库，当前评估口径统一收敛到 Qlib 风格的 `IC / Rank IC` 信号分析。

@@ -91,10 +91,12 @@ def test_run_candidate_selection_reuses_prepared_datasets(tmp_path: Path, monkey
         return ValidationMetrics(
             mae=0.0,
             r2=0.0,
-            pearson_ic=score,
-            spearman_ic=score,
+            ic=score,
+            rank_ic=score,
             ic_std=1.0,
-            ic_ir=score,
+            rank_ic_std=1.0,
+            icir=score,
+            rank_icir=score,
             ndcg_at_10=score,
         )
 
@@ -247,7 +249,7 @@ def test_run_experiment_final_retrain_uses_full_training_cache(tmp_path: Path, m
             "model_params": dict(kwargs.get("model_params") or {"alpha": 1.0}),
             "feature_columns": ["return_5"],
             "label_column": "future_return_5",
-            "validation_metrics": {"oos_spearman_ic": 0.1},
+            "validation_metrics": {"rank_ic": 0.1},
             "tuning": {"trial_records": []},
             "candidate_selection": {},
         }
@@ -262,17 +264,17 @@ def test_run_experiment_final_retrain_uses_full_training_cache(tmp_path: Path, m
         "ml.experiments.runner._run_candidate_selection",
         lambda **kwargs: {
             "selected_model_params": {"alpha": 2.0},
-            "candidate_selection": {"enabled": True, "candidates": [], "selected_metric": "oos_spearman_ic"},
+            "candidate_selection": {"enabled": True, "candidates": [], "selected_metric": "rank_ic"},
             "tuning": {"trial_records": []},
         },
     )
     monkeypatch.setattr(
         "ml.experiments.runner._run_signal_test",
-        lambda **kwargs: {"metrics": {"spearman_ic": 0.2}, "rows": 10},
+        lambda **kwargs: {"metrics": {"rank_ic": 0.2, "rank_icir": 0.2}, "rows": 10},
     )
     monkeypatch.setattr(
         "ml.experiments.runner._run_signal_windows",
-        lambda **kwargs: [{"name": "signal_test", "metrics": {"spearman_ic": 0.2, "ic_ir": 0.2}, "rows": 10}],
+        lambda **kwargs: [{"name": "signal_test", "metrics": {"rank_ic": 0.2, "rank_icir": 0.2}, "rows": 10}],
     )
     monkeypatch.setattr(
         "ml.experiments.runner._build_signal_frame",

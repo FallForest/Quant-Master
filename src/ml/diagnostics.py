@@ -100,10 +100,12 @@ def build_ic_decay_profile(
                 {
                     "horizon": horizon,
                     "rows": 0,
-                    "pearson_ic": 0.0,
-                    "spearman_ic": 0.0,
+                    "ic": 0.0,
+                    "rank_ic": 0.0,
                     "ic_std": 0.0,
-                    "ic_ir": 0.0,
+                    "rank_ic_std": 0.0,
+                    "icir": 0.0,
+                    "rank_icir": 0.0,
                     "ndcg_at_10": 0.0,
                 }
             )

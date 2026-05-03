@@ -39,7 +39,7 @@ train:
     keep_top_trials: 3
   candidate_selection:
     top_k: 3
-    metric: oos_spearman_ic
+    metric: rank_ic
     direction: maximize
 signal_test:
   start_date: 2025-01-01

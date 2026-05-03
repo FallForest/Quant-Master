@@ -35,7 +35,7 @@ class ExperimentTuningSpec:
     """
 
     trials: int = 20
-    metric: str = "spearman_ic"
+    metric: str = "rank_ic"
     direction: str = "maximize"
     timeout_seconds: int | None = None
     seed: int = 42

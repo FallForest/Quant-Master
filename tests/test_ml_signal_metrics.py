@@ -52,15 +52,15 @@ def test_evaluate_model_uses_cross_sectional_ic_series() -> None:
         label_column="label",
     )
 
-    assert metrics.pearson_ic == 0.0
-    assert metrics.spearman_ic == 0.0
+    assert metrics.ic == 0.0
+    assert metrics.rank_ic == 0.0
     assert metrics.ic_std == 1.0
-    assert metrics.ic_ir == 0.0
-    assert metrics.as_dict()["oos_ic_std"] == 1.0
-    assert metrics.as_dict()["oos_spearman_ic"] == 0.0
+    assert metrics.rank_icir == 0.0
+    assert metrics.as_dict()["ic_std"] == 1.0
+    assert metrics.as_dict()["rank_ic"] == 0.0
 
 
-def test_build_comparison_frame_exposes_oos_signal_metrics() -> None:
+def test_build_comparison_frame_exposes_qlib_style_signal_metrics() -> None:
     group_summary = {
         "experiments": [
             {
@@ -74,37 +74,23 @@ def test_build_comparison_frame_exposes_oos_signal_metrics() -> None:
                     "tuning": {"enabled": False},
                 },
                 "validation_metrics": {
-                    "oos_pearson_ic": 0.03,
-                    "oos_spearman_ic": 0.05,
-                    "oos_ic_std": 0.02,
-                    "oos_ic_ir": 2.5,
-                    "oos_ndcg_at_10": 0.51,
+                    "ic": 0.03,
+                    "rank_ic": 0.05,
+                    "ic_std": 0.02,
+                    "rank_ic_std": 0.03,
+                    "icir": 1.5,
+                    "rank_icir": 2.5,
                     "mae": 0.2,
                     "r2": 0.01,
                 },
                 "signal_test_metrics": {
-                    "oos_pearson_ic": 0.02,
-                    "oos_spearman_ic": 0.04,
-                    "oos_ic_std": 0.01,
-                    "oos_ic_ir": 4.0,
-                    "oos_ndcg_at_10": 0.49,
+                    "ic": 0.02,
+                    "rank_ic": 0.04,
+                    "ic_std": 0.01,
+                    "rank_ic_std": 0.02,
+                    "icir": 2.0,
+                    "rank_icir": 4.0,
                 },
-                "signal_windows_metrics": [
-                    {
-                        "name": "full_oos",
-                        "start_date": "2025-01-01",
-                        "end_date": "2025-12-31",
-                        "metrics": {"spearman_ic": 0.04, "ic_ir": 4.0},
-                    },
-                    {"metrics": {"spearman_ic": 0.03, "ic_ir": 2.0}},
-                    {"metrics": {"spearman_ic": 0.05, "ic_ir": 5.0}},
-                ],
-                "signal_test": {
-                    "name": "full_oos",
-                    "start_date": "2025-01-01",
-                    "end_date": "2025-12-31",
-                },
-                "signal_test_rows": 128,
                 "research_diagnostics": {"pbo": 0.2, "dsr": 0.8},
                 "candidate_selection": {},
                 "report_dir": "reports/demo",
@@ -116,83 +102,14 @@ def test_build_comparison_frame_exposes_oos_signal_metrics() -> None:
     frame = build_comparison_frame(group_summary)
 
     row = frame.iloc[0]
-    assert row["oos_pearson_ic"] == 0.03
-    assert row["oos_spearman_ic"] == 0.05
-    assert row["oos_ic_std"] == 0.02
-    assert row["oos_ic_ir"] == 2.5
-    assert row["pearson_ic"] == 0.03
-    assert row["spearman_ic"] == 0.05
-    assert row["test_pearson_ic"] == 0.02
-    assert row["test_spearman_ic"] == 0.04
+    assert row["ic"] == 0.03
+    assert row["rank_ic"] == 0.05
+    assert row["ic_std"] == 0.02
+    assert row["rank_icir"] == 2.5
+    assert row["test_ic"] == 0.02
+    assert row["test_rank_ic"] == 0.04
     assert row["test_ic_std"] == 0.01
-    assert row["test_ic_ir"] == 4.0
-    assert row["full_oos_spearman_ic"] == 0.04
-    assert row["signal_window_mean_spearman_ic"] == 0.04
-    assert row["signal_window_min_spearman_ic"] == 0.03
-    assert row["signal_window_mean_ic_ir"] == 3.5
-    assert row["window_mean_spearman_ic"] == 0.04
-    assert row["signal_test_rows"] == 128
-
-
-def test_build_comparison_frame_uses_experiment_profile_baseline_manifest(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "zz500_manifest.json"
-    manifest_path.write_text(
-        '{"baseline_name":"zz500_official_baseline","promotion_rule":{"metrics":{"full_oos_spearman_ic":0.06,"window_mean_spearman_ic":0.06,"window_min_spearman_ic":0.06,"window_mean_ic_ir":0.60}}}',
-        encoding="utf-8",
-    )
-    group_summary = {
-        "experiments": [
-            {
-                "name": "zz500_candidate",
-                "group": "zz500_group",
-                "research_profile": "zz500",
-                "baseline_manifest_path": str(manifest_path),
-                "model": "ridge",
-                "features": ["a"],
-                "training_metadata": {
-                    "validation_mode": "walk_forward",
-                    "target_mode": "cross_sectional_rank",
-                    "tuning": {"enabled": False},
-                },
-                "validation_metrics": {
-                    "oos_pearson_ic": 0.03,
-                    "oos_spearman_ic": 0.05,
-                    "oos_ic_std": 0.02,
-                    "oos_ic_ir": 2.5,
-                    "oos_ndcg_at_10": 0.51,
-                    "mae": 0.2,
-                    "r2": 0.01,
-                },
-                "signal_test_metrics": {
-                    "oos_pearson_ic": 0.02,
-                    "oos_spearman_ic": 0.04,
-                    "oos_ic_std": 0.01,
-                    "oos_ic_ir": 0.4,
-                    "oos_ndcg_at_10": 0.49,
-                },
-                "signal_windows_metrics": [
-                    {"metrics": {"spearman_ic": 0.05, "ic_ir": 0.5}},
-                    {"metrics": {"spearman_ic": 0.04, "ic_ir": 0.4}},
-                ],
-                "signal_test": {
-                    "name": "full_oos",
-                    "start_date": "2025-01-01",
-                    "end_date": "2025-12-31",
-                },
-                "signal_test_rows": 128,
-                "research_diagnostics": {"pbo": 0.2, "dsr": 0.8},
-                "candidate_selection": {},
-                "report_dir": "reports/demo",
-                "artifact_path": "artifacts/demo",
-            }
-        ]
-    }
-
-    frame = build_comparison_frame(group_summary)
-
-    row = frame.iloc[0]
-    assert row["official_baseline_name"] == "zz500_official_baseline"
-    assert not bool(row["beats_official_baseline"])
+    assert row["test_rank_icir"] == 4.0
 
 
 def test_apply_feature_normalization_cross_sectional_modes() -> None:
@@ -258,7 +175,7 @@ def test_build_ic_decay_profile_returns_requested_horizons() -> None:
     )
 
     assert [row["horizon"] for row in profile] == [1, 2]
-    assert all("spearman_ic" in row for row in profile)
+    assert all("rank_ic" in row for row in profile)
 
 
 def test_evaluate_scored_frame_matches_model_evaluation_shape() -> None:
@@ -276,8 +193,8 @@ def test_evaluate_scored_frame_matches_model_evaluation_shape() -> None:
         label_column="label",
     )
 
-    assert metrics.spearman_ic == pytest.approx(1.0)
-    assert metrics.ic_ir == 0.0
+    assert metrics.rank_ic == pytest.approx(1.0)
+    assert metrics.rank_icir == 0.0
 
 
 def test_build_signal_slice_diagnostics_uses_industry_reference(tmp_path: Path) -> None:

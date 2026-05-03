@@ -105,7 +105,7 @@ def load_experiment_spec(path: str | Path) -> ExperimentSpec:
             else None,
             candidate_selection=CandidateSelectionConfig(
                 top_k=int(candidate_selection_raw.get("top_k", 5)),
-                metric=str(candidate_selection_raw.get("metric", "oos_spearman_ic")),
+                metric=str(candidate_selection_raw.get("metric", "rank_ic")),
                 direction=str(candidate_selection_raw.get("direction", "maximize")),
             ),
         ),

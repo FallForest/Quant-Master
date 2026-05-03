@@ -70,6 +70,24 @@ FACTOR_FAMILIES = {
         max_recommended_count=2,
         notes="Investment signals are slower-moving and should usually be paired with faster technical features.",
     ),
+    "rolling_stats": FactorFamilySpec(
+        family_name="rolling_stats",
+        purpose="Describe rolling statistical transforms such as regression slope, correlation, and quantiles.",
+        max_recommended_count=4,
+        notes="Prefer a compact subset because many rolling statistics overlap heavily.",
+    ),
+    "raw_price_history": FactorFamilySpec(
+        family_name="raw_price_history",
+        purpose="Describe normalized lagged price history features compatible with raw-history model inputs.",
+        max_recommended_count=10,
+        notes="These are high-dimensional sequence-style features and are usually used as a pack.",
+    ),
+    "raw_volume_history": FactorFamilySpec(
+        family_name="raw_volume_history",
+        purpose="Describe normalized lagged volume history features compatible with raw-history model inputs.",
+        max_recommended_count=10,
+        notes="These are high-dimensional sequence-style features and are usually used with raw price history.",
+    ),
 }
 
 

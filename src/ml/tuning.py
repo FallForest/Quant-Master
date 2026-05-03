@@ -19,7 +19,7 @@ from ml.validation import WalkForwardConfig, evaluate_holdout_validation, evalua
 @dataclass(slots=True)
 class TuningConfig:
     trials: int = 20
-    metric: str = "spearman_ic"
+    metric: str = "rank_ic"
     direction: str = "maximize"
     timeout_seconds: int | None = None
     seed: int = 42

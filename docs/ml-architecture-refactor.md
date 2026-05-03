@@ -164,8 +164,8 @@
 
 优先关注：
 
-- `oos_spearman_ic`
-- `oos_pearson_ic`
+- `rank_ic`
+- `ic`
 - `oos_ic_std`
 - `oos_ic_ir`
 - `oos_ndcg_at_10`

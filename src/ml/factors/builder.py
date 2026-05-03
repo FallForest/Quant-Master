@@ -21,46 +21,6 @@ class FactorBuildResult:
     diagnostics: dict[str, object]
 
 
-def _build_factor_frame_legacy(
-    data: pd.DataFrame,
-    factor_names: list[str],
-    *,
-    registry: FactorRegistry | None = None,
-    reference_root: str = "data/reference",
-    market: str = "ashare",
-) -> pd.DataFrame:
-    """按给定因子列表构造特征表。"""
-
-    active_registry = registry or get_default_registry()
-    _validate_input_frame(data)
-    if data.empty:
-        return data.copy()
-
-    ordered = data.sort_values(["symbol", "timestamp"]).copy()
-    specs = [active_registry.get_factor(factor_name) for factor_name in factor_names]
-    # 一次性补足所有所需辅助列，避免每个因子各自重复读取 reference 数据。
-    ordered = augment_factor_input_frame(
-        data=ordered,
-        specs=specs,
-        reference_root=reference_root,
-        market=market,
-    )
-    frames: list[pd.DataFrame] = []
-    for _, frame in ordered.groupby("symbol", sort=False):
-        item = frame.copy()
-        # cache 仅在单只股票内部复用中间序列，
-        # 例如收益率、滚动均值、基准收益率等，减少重复计算。
-        cache: dict[tuple[str, int] | str, pd.Series] = {}
-        for factor_name in factor_names:
-            spec = active_registry.get_factor(factor_name)
-            item[factor_name] = _compute_factor(item=item, kind=str(spec.params["kind"]), params=spec.params, cache=cache)
-        item = _replace_infinite_values(item)
-        item["history_count"] = item.reset_index().index + 1
-        frames.append(item)
-
-    return pd.concat(frames, ignore_index=True).sort_values(["timestamp", "symbol"]).reset_index(drop=True)
-
-
 def build_factor_frame(
     data: pd.DataFrame,
     factor_names: list[str],
@@ -502,6 +462,20 @@ def _compute_factor(item: pd.DataFrame, *, kind: str, params: dict[str, object],
         log_co = np.log(item["close"] / item["open"].replace(0.0, np.nan))
         estimator = 0.5 * log_hl.pow(2) - ((2.0 * np.log(2.0)) - 1.0) * log_co.pow(2)
         return np.sqrt(_rolling_mean(estimator.clip(lower=0.0), window, cache, key=f"gk_{window}"))
+    if kind == "qlib_price_ratio":
+        field = str(params["field"])
+        lag = int(params.get("lag", 0) or 0)
+        source = _price_field_series(item, field=field, cache=cache)
+        if field == "volume":
+            current_volume = pd.to_numeric(item["volume"], errors="coerce")
+            shifted = source.shift(lag) if lag else source
+            return shifted / (current_volume + 1e-12)
+        shifted = source.shift(lag) if lag else source
+        return shifted / item["close"].replace(0.0, np.nan)
+    if kind == "qlib_kbar":
+        return _compute_qlib_kbar(item=item, feature=str(params["feature"]), cache=cache)
+    if kind == "qlib_rolling":
+        return _compute_qlib_rolling(item=item, op=str(params["op"]), window=int(params["window"]), cache=cache)
     raise ValueError(f"Unsupported factor kind: {kind}")
 
 
@@ -690,3 +664,238 @@ def _replace_infinite_values(item: pd.DataFrame) -> pd.DataFrame:
         return item
     item.loc[:, numeric_columns] = item.loc[:, numeric_columns].replace([np.inf, -np.inf], np.nan)
     return item
+
+
+def _price_field_series(item: pd.DataFrame, *, field: str, cache: dict) -> pd.Series:
+    key = f"price_field_{field}"
+    if key not in cache:
+        if field == "vwap":
+            cache[key] = _vwap(item, cache)
+        else:
+            if field not in item.columns:
+                raise ValueError(f"Missing price column: {field}")
+            cache[key] = pd.to_numeric(item[field], errors="coerce")
+    return cache[key]
+
+
+def _vwap(item: pd.DataFrame, cache: dict) -> pd.Series:
+    key = "vwap"
+    if key not in cache:
+        if "vwap" in item.columns:
+            cache[key] = pd.to_numeric(item["vwap"], errors="coerce")
+        elif "amount" in item.columns:
+            amount = pd.to_numeric(item["amount"], errors="coerce")
+            cache[key] = amount / (pd.to_numeric(item["volume"], errors="coerce").replace(0.0, np.nan) * 100.0)
+        else:
+            cache[key] = _typical_price(item, cache)
+    return cache[key]
+
+
+def _compute_qlib_kbar(*, item: pd.DataFrame, feature: str, cache: dict) -> pd.Series:
+    open_price = pd.to_numeric(item["open"], errors="coerce")
+    close_price = pd.to_numeric(item["close"], errors="coerce")
+    high_price = pd.to_numeric(item["high"], errors="coerce")
+    low_price = pd.to_numeric(item["low"], errors="coerce")
+    upper_body = pd.concat([open_price, close_price], axis=1).max(axis=1)
+    lower_body = pd.concat([open_price, close_price], axis=1).min(axis=1)
+    open_denominator = open_price.replace(0.0, np.nan)
+    range_denominator = (high_price - low_price).replace(0.0, np.nan) + 1e-12
+
+    if feature == "KMID":
+        return (close_price - open_price) / open_denominator
+    if feature == "KLEN":
+        return (high_price - low_price) / open_denominator
+    if feature == "KMID2":
+        return (close_price - open_price) / range_denominator
+    if feature == "KUP":
+        return (high_price - upper_body) / open_denominator
+    if feature == "KUP2":
+        return (high_price - upper_body) / range_denominator
+    if feature == "KLOW":
+        return (lower_body - low_price) / open_denominator
+    if feature == "KLOW2":
+        return (lower_body - low_price) / range_denominator
+    if feature == "KSFT":
+        return (2.0 * close_price - high_price - low_price) / open_denominator
+    if feature == "KSFT2":
+        return (2.0 * close_price - high_price - low_price) / range_denominator
+    raise ValueError(f"Unsupported Qlib kbar feature: {feature}")
+
+
+def _compute_qlib_rolling(*, item: pd.DataFrame, op: str, window: int, cache: dict) -> pd.Series:
+    close_price = pd.to_numeric(item["close"], errors="coerce")
+    high_price = pd.to_numeric(item["high"], errors="coerce")
+    low_price = pd.to_numeric(item["low"], errors="coerce")
+    volume = pd.to_numeric(item["volume"], errors="coerce")
+    close_denominator = close_price.replace(0.0, np.nan)
+    volume_denominator = volume + 1e-12
+
+    if op == "ROC":
+        return close_price.shift(window) / close_denominator
+    if op == "MA":
+        return _rolling_mean(close_price, window, cache, key=f"qlib_close_mean_{window}") / close_denominator
+    if op == "STD":
+        return _rolling_std(close_price, window, cache, key=f"qlib_close_std_{window}") / close_denominator
+    if op == "BETA":
+        return _rolling_linear_slope(close_price, window, cache, key=f"qlib_close_slope_{window}") / close_denominator
+    if op == "RSQR":
+        return _rolling_rsquare(close_price, window, cache, key=f"qlib_close_rsqr_{window}")
+    if op == "RESI":
+        return _rolling_residual(close_price, window, cache, key=f"qlib_close_resi_{window}") / close_denominator
+    if op == "MAX":
+        return _rolling_max(high_price, window, cache, key=f"qlib_high_max_{window}") / close_denominator
+    if op == "MIN":
+        return _rolling_min(low_price, window, cache, key=f"qlib_low_min_{window}") / close_denominator
+    if op == "QTLU":
+        return _rolling_quantile(close_price, window, 0.8, cache, key=f"qlib_close_qtlu_{window}") / close_denominator
+    if op == "QTLD":
+        return _rolling_quantile(close_price, window, 0.2, cache, key=f"qlib_close_qtld_{window}") / close_denominator
+    if op == "RANK":
+        return _rolling_percentile_rank(close_price, window, cache, key=f"qlib_close_rank_{window}")
+    if op == "RSV":
+        channel = (_rolling_max(high_price, window, cache, key=f"qlib_rsv_high_{window}") - _rolling_min(low_price, window, cache, key=f"qlib_rsv_low_{window}")).replace(0.0, np.nan)
+        return (close_price - _rolling_min(low_price, window, cache, key=f"qlib_rsv_low_{window}")) / channel
+    if op == "IMAX":
+        return _rolling_days_since_extreme(high_price, window, mode="max", cache=cache, key=f"qlib_imax_{window}") / window
+    if op == "IMIN":
+        return _rolling_days_since_extreme(low_price, window, mode="min", cache=cache, key=f"qlib_imin_{window}") / window
+    if op == "IMXD":
+        max_days = _rolling_days_since_extreme(high_price, window, mode="max", cache=cache, key=f"qlib_imxd_max_{window}")
+        min_days = _rolling_days_since_extreme(low_price, window, mode="min", cache=cache, key=f"qlib_imxd_min_{window}")
+        return (max_days - min_days) / window
+    if op == "CORR":
+        return _rolling_corr(close_price, np.log(volume + 1.0), window, cache, key=f"qlib_corr_{window}")
+    if op == "CORD":
+        return _rolling_corr(
+            close_price / close_price.shift(1).replace(0.0, np.nan),
+            np.log(volume / volume.shift(1).replace(0.0, np.nan) + 1.0),
+            window,
+            cache,
+            key=f"qlib_cord_{window}",
+        )
+    if op == "CNTP":
+        return _rolling_mean((close_price > close_price.shift(1)).astype(float), window, cache, key=f"qlib_cntp_{window}")
+    if op == "CNTN":
+        return _rolling_mean((close_price < close_price.shift(1)).astype(float), window, cache, key=f"qlib_cntn_{window}")
+    if op == "CNTD":
+        up = _rolling_mean((close_price > close_price.shift(1)).astype(float), window, cache, key=f"qlib_cntd_up_{window}")
+        down = _rolling_mean((close_price < close_price.shift(1)).astype(float), window, cache, key=f"qlib_cntd_down_{window}")
+        return up - down
+    if op == "SUMP":
+        delta = close_price - close_price.shift(1)
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_sump_abs_{window}")
+        return _rolling_sum(delta.clip(lower=0.0), window, cache, key=f"qlib_sump_pos_{window}") / (absolute_sum + 1e-12)
+    if op == "SUMN":
+        delta = close_price - close_price.shift(1)
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_sumn_abs_{window}")
+        return _rolling_sum((-delta).clip(lower=0.0), window, cache, key=f"qlib_sumn_neg_{window}") / (absolute_sum + 1e-12)
+    if op == "SUMD":
+        delta = close_price - close_price.shift(1)
+        positive = _rolling_sum(delta.clip(lower=0.0), window, cache, key=f"qlib_sumd_pos_{window}")
+        negative = _rolling_sum((-delta).clip(lower=0.0), window, cache, key=f"qlib_sumd_neg_{window}")
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_sumd_abs_{window}")
+        return (positive - negative) / (absolute_sum + 1e-12)
+    if op == "VMA":
+        return _rolling_mean(volume, window, cache, key=f"qlib_volume_mean_{window}") / volume_denominator
+    if op == "VSTD":
+        return _rolling_std(volume, window, cache, key=f"qlib_volume_std_{window}") / volume_denominator
+    if op == "WVMA":
+        weighted_move = (close_price / close_price.shift(1).replace(0.0, np.nan) - 1.0).abs() * volume
+        numerator = _rolling_std(weighted_move, window, cache, key=f"qlib_wvma_std_{window}")
+        denominator = _rolling_mean(weighted_move, window, cache, key=f"qlib_wvma_mean_{window}")
+        return numerator / (denominator + 1e-12)
+    if op == "VSUMP":
+        delta = volume - volume.shift(1)
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_vsump_abs_{window}")
+        return _rolling_sum(delta.clip(lower=0.0), window, cache, key=f"qlib_vsump_pos_{window}") / (absolute_sum + 1e-12)
+    if op == "VSUMN":
+        delta = volume - volume.shift(1)
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_vsumn_abs_{window}")
+        return _rolling_sum((-delta).clip(lower=0.0), window, cache, key=f"qlib_vsumn_neg_{window}") / (absolute_sum + 1e-12)
+    if op == "VSUMD":
+        delta = volume - volume.shift(1)
+        positive = _rolling_sum(delta.clip(lower=0.0), window, cache, key=f"qlib_vsumd_pos_{window}")
+        negative = _rolling_sum((-delta).clip(lower=0.0), window, cache, key=f"qlib_vsumd_neg_{window}")
+        absolute_sum = _rolling_sum(delta.abs(), window, cache, key=f"qlib_vsumd_abs_{window}")
+        return (positive - negative) / (absolute_sum + 1e-12)
+    raise ValueError(f"Unsupported Qlib rolling op: {op}")
+
+
+def _rolling_sum(series: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    cache_key = ("rolling_sum", key)
+    if cache_key not in cache:
+        cache[cache_key] = series.rolling(window, min_periods=window).sum()
+    return cache[cache_key]
+
+
+def _rolling_quantile(series: pd.Series, window: int, quantile: float, cache: dict, *, key: str) -> pd.Series:
+    cache_key = ("rolling_quantile", key)
+    if cache_key not in cache:
+        cache[cache_key] = series.rolling(window, min_periods=window).quantile(quantile)
+    return cache[cache_key]
+
+
+def _rolling_percentile_rank(series: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    cache_key = ("rolling_percentile_rank", key)
+    if cache_key not in cache:
+        cache[cache_key] = series.rolling(window, min_periods=window).apply(
+            lambda values: pd.Series(values).rank(pct=True).iloc[-1],
+            raw=False,
+        )
+    return cache[cache_key]
+
+
+def _rolling_days_since_extreme(series: pd.Series, window: int, *, mode: str, cache: dict, key: str) -> pd.Series:
+    cache_key = ("rolling_days_since_extreme", key)
+    if cache_key not in cache:
+        if mode == "max":
+            fn = lambda values: float(window - 1 - int(np.argmax(values)))
+        elif mode == "min":
+            fn = lambda values: float(window - 1 - int(np.argmin(values)))
+        else:
+            raise ValueError(f"Unsupported extreme mode: {mode}")
+        cache[cache_key] = series.rolling(window, min_periods=window).apply(fn, raw=True)
+    return cache[cache_key]
+
+
+def _rolling_corr(left: pd.Series, right: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    cache_key = ("rolling_corr", key)
+    if cache_key not in cache:
+        cache[cache_key] = left.rolling(window, min_periods=window).corr(right)
+    return cache[cache_key]
+
+
+def _rolling_linear_regression(series: pd.Series, window: int, cache: dict, *, key: str) -> tuple[pd.Series, pd.Series, pd.Series]:
+    cache_key = ("rolling_linear_regression", key)
+    if cache_key not in cache:
+        x = np.arange(window, dtype=float)
+
+        def regression(values: np.ndarray) -> np.ndarray:
+            y = np.asarray(values, dtype=float)
+            if np.isnan(y).any():
+                return np.array([np.nan, np.nan, np.nan], dtype=float)
+            slope, intercept = np.polyfit(x, y, 1)
+            fitted = intercept + slope * x
+            residual = y[-1] - fitted[-1]
+            denom = float(np.square(y - y.mean()).sum())
+            rsquare = np.nan if denom == 0.0 else 1.0 - float(np.square(y - fitted).sum()) / denom
+            return np.array([slope, rsquare, residual], dtype=float)
+
+        # pandas rolling apply is scalar-only, so compute each metric separately.
+        slope = series.rolling(window, min_periods=window).apply(lambda values: regression(values)[0], raw=True)
+        rsquare = series.rolling(window, min_periods=window).apply(lambda values: regression(values)[1], raw=True)
+        residual = series.rolling(window, min_periods=window).apply(lambda values: regression(values)[2], raw=True)
+        cache[cache_key] = (slope, rsquare, residual)
+    return cache[cache_key]
+
+
+def _rolling_linear_slope(series: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    return _rolling_linear_regression(series, window, cache, key=key)[0]
+
+
+def _rolling_rsquare(series: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    return _rolling_linear_regression(series, window, cache, key=key)[1]
+
+
+def _rolling_residual(series: pd.Series, window: int, cache: dict, *, key: str) -> pd.Series:
+    return _rolling_linear_regression(series, window, cache, key=key)[2]
